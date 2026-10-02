@@ -24,6 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "board_io.h"
 
 /* USER CODE END Includes */
 
@@ -92,6 +93,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
+  board_io_init();
 
   /* USER CODE END 2 */
 

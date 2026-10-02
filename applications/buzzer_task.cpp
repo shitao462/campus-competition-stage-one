@@ -3,28 +3,28 @@
 
 namespace
 {
-constexpr float kBuzzerTimerClockHz = 84e6f;
-constexpr float kBeepFrequencyHz = 5000.0f;
-constexpr float kBeepDutyCycle = 0.1f;
-constexpr uint32_t kBeepDurationMs = 100;
-constexpr uint32_t kBeepIntervalMs = 100;
-constexpr uint8_t kBeepCount = 3;
+constexpr float BUZZER_TIMER_CLOCK_HZ = 84e6f;
+constexpr float BEEP_FREQUENCY_HZ = 5000.0f;
+constexpr float BEEP_DUTY_CYCLE = 0.1f;
+constexpr uint32_t BEEP_DURATION_MS = 100;
+constexpr uint32_t BEEP_INTERVAL_MS = 100;
+constexpr uint8_t BEEP_COUNT = 3;
 
-sp::Buzzer buzzer(&htim4, TIM_CHANNEL_3, kBuzzerTimerClockHz);
+sp::Buzzer buzzer(&htim4, TIM_CHANNEL_3, BUZZER_TIMER_CLOCK_HZ);
 }  // namespace
 
 extern "C" void buzzer_task(void const * argument)
 {
   (void)argument;
-  buzzer.set(kBeepFrequencyHz, kBeepDutyCycle);
+  buzzer.set(BEEP_FREQUENCY_HZ, BEEP_DUTY_CYCLE);
 
-  for (uint8_t i = 0; i < kBeepCount; ++i) {
+  for (uint8_t beep_index = 0; beep_index < BEEP_COUNT; ++beep_index) {
     buzzer.start();
-    osDelay(kBeepDurationMs);
+    osDelay(BEEP_DURATION_MS);
     buzzer.stop();
 
-    if (i + 1 < kBeepCount) {
-      osDelay(kBeepIntervalMs);
+    if (beep_index + 1 < BEEP_COUNT) {
+      osDelay(BEEP_INTERVAL_MS);
     }
   }
 

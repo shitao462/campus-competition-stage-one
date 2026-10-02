@@ -48,16 +48,21 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
-    applications/led_Task.cpp
+    applications/led_task.cpp
     applications/buzzer_task.cpp
-    sp_middleware/io/led/led.cpp
+    applications/imu_task.cpp
+    applications/remote_task.cpp
+    applications/board_io.c
     sp_middleware/io/buzzer/buzzer.cpp
+    sp_middleware/io/bmi088/bmi088.cpp
+    sp_middleware/io/dbus/dbus.cpp
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     sp_middleware
+    applications
 
 )
 
@@ -72,3 +77,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+
+# newlib-nano needs this to print IMU floating-point values with snprintf.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -u _printf_float)

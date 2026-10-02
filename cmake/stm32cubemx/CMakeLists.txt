@@ -43,6 +43,8 @@ target_sources(stm32cubemx INTERFACE
     ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_cortex.c
     ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal.c
     ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c
+    ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c
+    ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_uart.c
     ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim.c
     ../../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim_ex.c
     ../../Core/Src/system_stm32f4xx.c
@@ -71,5 +73,4 @@ target_link_libraries(stm32cubemx INTERFACE
 if(CMAKE_C_STANDARD LESS 11)
     message(ERROR "Generated code requires C11 or higher")
 endif()
-
 
