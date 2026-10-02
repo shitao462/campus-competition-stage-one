@@ -21,7 +21,8 @@
 安装 Arm GNU Toolchain、CMake 和 Ninja 后：
 
 ```powershell
-git clone --recurse-submodules <repository-url>
+git clone --recurse-submodules https://github.com/shitao462/campus-competition-stage-one.git
+cd campus-competition-stage-one
 cmake -S . -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/Debug
 ```
