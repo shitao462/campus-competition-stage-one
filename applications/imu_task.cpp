@@ -3,6 +3,7 @@
 #include "cmsis_os.h"
 #include "io/bmi088/bmi088.hpp"
 #include "usart.h"
+#include "motor_task.hpp"
 
 namespace
 {
@@ -21,6 +22,7 @@ extern "C" void imu_task(void const * argument)
   (void)argument;
   imu.init();
   uint32_t last_print_ms = 0;
+  uint32_t last_status_print_ms = 0;
 
   while (true) {
     imu.update();
@@ -36,6 +38,23 @@ extern "C" void imu_task(void const * argument)
         HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(line), length, 20);
       }
       last_print_ms = now_ms;
+    }
+    if (now_ms - last_status_print_ms >= 1000) {
+      const app::MotorStatus status = app::get_motor_status();
+      char line[160];
+      const int length = std::snprintf(
+        line, sizeof(line),
+        "motor_disabled=%u down=%u rc_alive=%u motor_a_alive=%u motor_b_alive=%u tx_failures=%lu\r\n",
+        static_cast<unsigned>(status.output_disabled),
+        static_cast<unsigned>(status.right_switch_down),
+        static_cast<unsigned>(status.remote_alive),
+        static_cast<unsigned>(status.motor_a_alive),
+        static_cast<unsigned>(status.motor_b_alive),
+        static_cast<unsigned long>(status.transmit_failures));
+      if (length > 0 && length < static_cast<int>(sizeof(line))) {
+        HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(line), length, 20);
+      }
+      last_status_print_ms = now_ms;
     }
     osDelay(IMU_SAMPLE_INTERVAL_MS);
   }

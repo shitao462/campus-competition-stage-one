@@ -10,6 +10,7 @@ extern "C" {
 extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart3;
+extern CAN_HandleTypeDef hcan1;
 
 void board_io_init(void);
 

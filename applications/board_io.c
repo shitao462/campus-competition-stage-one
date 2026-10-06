@@ -5,6 +5,7 @@
 SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
+CAN_HandleTypeDef hcan1;
 
 void board_io_init(void)
 {
@@ -17,6 +18,29 @@ void board_io_init(void)
   __HAL_RCC_SPI1_CLK_ENABLE();
   __HAL_RCC_USART1_CLK_ENABLE();
   __HAL_RCC_USART3_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_CAN1_CLK_ENABLE();
+
+  // CAN1: PD0 RX, PD1 TX. APB1 = 42 MHz; 42 MHz / (3 * 14) = 1 Mbit/s.
+  gpio.Pin = GPIO_PIN_0 | GPIO_PIN_1;
+  gpio.Mode = GPIO_MODE_AF_PP;
+  gpio.Pull = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  gpio.Alternate = GPIO_AF9_CAN1;
+  HAL_GPIO_Init(GPIOD, &gpio);
+  hcan1.Instance = CAN1;
+  hcan1.Init.Prescaler = 3;
+  hcan1.Init.Mode = CAN_MODE_NORMAL;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_11TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
+  hcan1.Init.TimeTriggeredMode = DISABLE;
+  hcan1.Init.AutoBusOff = ENABLE;
+  hcan1.Init.AutoWakeUp = DISABLE;
+  hcan1.Init.AutoRetransmission = DISABLE;
+  hcan1.Init.ReceiveFifoLocked = DISABLE;
+  hcan1.Init.TransmitFifoPriority = ENABLE;
+  if (HAL_CAN_Init(&hcan1) != HAL_OK) Error_Handler();
 
   // BMI088 SPI1: SCK PB3, MISO PB4, MOSI PA7, accel CS PA4, gyro CS PB0.
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);

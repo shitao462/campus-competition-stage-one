@@ -4,18 +4,22 @@
         {
             "name": "OpenOCD: Debug",
             "cwd": "${workspaceFolder}",
-            "executable": "${command:cmake.getLaunchTargetPath}",
+            "executable": "${workspaceFolder}/build/Debug/text3.elf",
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "openocd",
+            "serverpath": "D:/STM32DevTools/OpenOCD/xpack-openocd-0.12.0-7/bin/openocd.exe",
+            "gdbPath": "D:/STM32DevTools/ArmGCC/xpack-arm-none-eabi-gcc-15.2.1-1.1/bin/arm-none-eabi-gdb.exe",
+            "runToEntryPoint": "remote_task",
             "configFiles": [
                 "openocd.cfg",
             ],
             "liveWatch": {
-                "enabled": true,
+                "enabled": false,
                 "samplesPerSecond": 20
             },
-            "preLaunchTask": "CMake: build"
+            "showDevDebugOutput": "raw",
+            "preLaunchTask": "Build Debug firmware"
         }
     ]
 }

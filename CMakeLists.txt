@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     applications/buzzer_task.cpp
     applications/imu_task.cpp
     applications/remote_task.cpp
+    applications/motor_task.cpp
     applications/board_io.c
     sp_middleware/io/buzzer/buzzer.cpp
     sp_middleware/io/bmi088/bmi088.cpp

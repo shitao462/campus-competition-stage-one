@@ -2,6 +2,14 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"type": "process",
+			"label": "Build Debug firmware",
+			"command": "cmake",
+			"args": ["--build", "--preset", "Debug"],
+			"options": {"cwd": "${workspaceFolder}"},
+			"problemMatcher": []
+		},
+		{
 			"type": "shell",
 			"label": "OpenOCD: flash",
 			"command": "openocd",

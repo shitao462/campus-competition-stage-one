@@ -1,11 +1,26 @@
 #include "cmsis_os.h"
 #include "io/dbus/dbus.hpp"
+#include "remote_task.hpp"
+#include "FreeRTOS.h"
+#include "task.h"
 
 namespace
 {
 sp::DBus remote(&huart3, false);
 volatile bool remote_link_alive = false;
 }  // namespace
+
+namespace app
+{
+RemoteStatus get_remote_status()
+{
+  taskENTER_CRITICAL();
+  const bool alive = remote.is_alive(osKernelSysTick());
+  const bool right_switch_down = alive && remote.sw_r == sp::DBusSwitchMode::DOWN;
+  taskEXIT_CRITICAL();
+  return {alive, right_switch_down};
+}
+}  // namespace app
 
 extern "C" void remote_task(void const * argument)
 {

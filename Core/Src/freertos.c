@@ -55,6 +55,7 @@ osThreadId buzzerTaskHandle;
 /* USER CODE BEGIN FunctionPrototypes */
 extern void imu_task(void const * argument);
 extern void remote_task(void const * argument);
+extern void motor_task(void const * argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -124,6 +125,8 @@ void MX_FREERTOS_Init(void) {
   osThreadCreate(osThread(imuTask), NULL);
   osThreadDef(remoteTask, remote_task, osPriorityNormal, 0, 256);
   osThreadCreate(osThread(remoteTask), NULL);
+  osThreadDef(motorTask, motor_task, osPriorityNormal, 0, 256);
+  osThreadCreate(osThread(motorTask), NULL);
   /* USER CODE END RTOS_THREADS */
 
 }
