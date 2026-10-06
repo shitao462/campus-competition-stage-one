@@ -125,7 +125,7 @@ void MX_FREERTOS_Init(void) {
   osThreadCreate(osThread(imuTask), NULL);
   osThreadDef(remoteTask, remote_task, osPriorityNormal, 0, 256);
   osThreadCreate(osThread(remoteTask), NULL);
-  osThreadDef(motorTask, motor_task, osPriorityNormal, 0, 256);
+  osThreadDef(motorTask, motor_task, osPriorityAboveNormal, 0, 512);
   osThreadCreate(osThread(motorTask), NULL);
   /* USER CODE END RTOS_THREADS */
 
