@@ -108,5 +108,32 @@ extern "C" int run_tests()
     output = controller.update(input);
     if (output.current_a != 0 || output.current_b != 0) return 15;
   }
+  // Slow tracking inside the former settling deadband must retain drive torque.
+  // Yaw updates every 10 ms while the controller runs every 5 ms.
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
+    controller.update(input);
+    app::LinkageOutput output;
+    const float direction_b = ratio > 0 ? 1.0f : -1.0f;
+    for (unsigned step = 0; step < 160; ++step) {
+      if (step % 2 == 0) input.yaw += 0.0004f;
+      input.yaw_rate = 0.04f;
+      input.angle_a = input.yaw - 0.004f;
+      input.angle_b = ratio * input.yaw - direction_b * 0.004f;
+      input.speed_a = 0.04f;
+      input.speed_b = ratio * input.speed_a;
+      output = controller.update(input);
+      if (output.manual_source != 0) return 16;
+      if (step > 100 && output.current_a <= 0.0001f) return 17;
+      if (step > 100 && output.current_b * direction_b <= 0.0001f) return 18;
+      if (!near(output.target_a, input.yaw) || !near(output.target_b, ratio * input.yaw)) return 19;
+    }
+    input.angle_a = output.target_a;
+    input.angle_b = output.target_b;
+    input.yaw_rate = input.speed_a = input.speed_b = 0;
+    for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
+    if (output.current_a != 0 || output.current_b != 0) return 20;
+  }
   return 0;
 }

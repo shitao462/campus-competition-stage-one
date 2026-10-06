@@ -6,7 +6,7 @@
 namespace app
 {
 constexpr float LINKAGE_PERIOD_S = 0.005f;
-constexpr float MOTOR_CURRENT_LIMIT_A = 0.25f;
+constexpr float MOTOR_CURRENT_LIMIT_A = 0.3f;
 constexpr float MOTOR_CURRENT_SLEW_A_PER_S = 0.8f;
 constexpr float MOTOR_ACCELERATION_RADPS2 = 1.8f;
 
@@ -47,6 +47,10 @@ private:
     float current = 0;
     float filtered_speed = 0;
     bool integral_paused = false;
+    bool target_initialized = false;
+    float previous_target = 0;
+    float target_speed = 0;
+    float settled_s = 0;
   };
   float calculate_current(
     sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,

@@ -12,6 +12,9 @@ constexpr float INTEGRAL_LIMIT_A = 0.05f;
 constexpr float SPEED_FILTER_ALPHA = 0.2f;
 constexpr float SETTLED_ERROR_RAD = 0.008f;
 constexpr float SETTLED_SPEED_RADPS = 0.05f;
+constexpr float TARGET_SPEED_FILTER_ALPHA = app::LINKAGE_PERIOD_S / (0.04f + app::LINKAGE_PERIOD_S);
+constexpr float SETTLED_TARGET_SPEED_RADPS = 0.01f;
+constexpr float SETTLED_DWELL_S = 0.1f;
 constexpr float MANUAL_ERROR_RAD = 0.025f;
 constexpr float MANUAL_SPEED_RADPS = 0.08f;
 constexpr float BOARD_STILL_RADPS = 0.05f;
@@ -62,11 +65,23 @@ float LinkageController::calculate_current(
   float measured_speed)
 {
   state.filtered_speed += SPEED_FILTER_ALPHA * (measured_speed - state.filtered_speed);
+  // Differentiate the final target so board and hand inputs share the same smoothing.
+  // Initialize at the current target to avoid a derivative kick on entry or source release.
+  const float target_step = state.target_initialized ? target - state.previous_target : 0;
+  state.previous_target = target;
+  state.target_initialized = true;
+  const float raw_target_speed = sp::limit_max(target_step / LINKAGE_PERIOD_S, 6.0f);
+  state.target_speed += TARGET_SPEED_FILTER_ALPHA * (raw_target_speed - state.target_speed);
   position.calc(target, angle);
+  const float requested_speed = sp::limit_max(position.out + state.target_speed, SPEED_LIMIT_RADPS);
   state.speed_reference =
-    approach(state.speed_reference, position.out, MOTOR_ACCELERATION_RADPS2 * LINKAGE_PERIOD_S);
-  const bool settled =
-    std::abs(target - angle) < SETTLED_ERROR_RAD && std::abs(measured_speed) < SETTLED_SPEED_RADPS;
+    approach(state.speed_reference, requested_speed, MOTOR_ACCELERATION_RADPS2 * LINKAGE_PERIOD_S);
+  const bool settled_candidate = std::abs(target - angle) < SETTLED_ERROR_RAD &&
+                                 std::abs(measured_speed) < SETTLED_SPEED_RADPS &&
+                                 std::abs(state.target_speed) < SETTLED_TARGET_SPEED_RADPS &&
+                                 std::abs(target_step) < 0.00001f;
+  state.settled_s = settled_candidate ? state.settled_s + LINKAGE_PERIOD_S : 0;
+  const bool settled = state.settled_s >= SETTLED_DWELL_S;
   if (settled) {
     // Remove residual integral torque once near the target; retain position correction outside it.
     speed.clear();
