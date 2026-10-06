@@ -4,7 +4,7 @@
 
 ## 四项功能
 
-1. **蜂鸣器**：上电后由 TIM4_CH3（PD14）播放三次短提示音。
+1. **蜂鸣器**：上电后由 TIM4_CH3（PD14）播放《两只老虎》开头四小节，约 4 秒，仅播放一次。
 2. **LED**：板载 RGB LED（PH12 红、PH11 绿、PH10 蓝）每 200 ms 依次点亮。程序正常运行时持续循环。
 3. **串口打印**：板载 BMI088 通过 SPI1 读取三轴加速度和角速度，每 100 ms 从 USART1 TX 输出一行。加速度单位为 m/s²，角速度单位为 rad/s。串口设置为 115200、8N1。
 4. **遥控器**：DT7 与 DR16 配对后，把 DR16 的 DBUS 信号接到 C 板 DBUS 口（PWM 接口第 8 列：A8 GND、B8 5V、C8 DBUS）。USART3 RX（PC11）以 100000、8E1 接收；`remote_task.cpp` 中的 `remote` 和 `remote_link_alive` 可在调试器中观察。`remote_link_alive` 在收到有效帧后为 `true`，断联超过 100 ms 后变为 `false`。
