@@ -9,6 +9,9 @@ constexpr float SPEED_LIMIT_RADPS = 1.0f;
 constexpr float SPEED_KP = 0.13f;
 constexpr float SPEED_KI = 0.2f;
 constexpr float INTEGRAL_LIMIT_A = 0.05f;
+// Reset must overcome static load even when the remaining position error is small.
+constexpr float RESET_SPEED_KI = 0.4f;
+constexpr float RESET_INTEGRAL_LIMIT_A = 0.15f;
 constexpr float SPEED_FILTER_ALPHA = 0.2f;
 constexpr float SETTLED_ERROR_RAD = 0.008f;
 constexpr float SETTLED_SPEED_RADPS = 0.05f;
@@ -43,7 +46,11 @@ LinkageController::LinkageController()
 : position_a_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, SPEED_LIMIT_RADPS, 0),
   position_b_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, SPEED_LIMIT_RADPS, 0),
   speed_a_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
-  speed_b_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A)
+  speed_b_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
+  reset_speed_a_(
+    LINKAGE_PERIOD_S, SPEED_KP, RESET_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A),
+  reset_speed_b_(
+    LINKAGE_PERIOD_S, SPEED_KP, RESET_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A)
 {
 }
 
@@ -58,6 +65,8 @@ void LinkageController::reset()
   position_b_.clear();
   speed_a_.clear();
   speed_b_.clear();
+  reset_speed_a_.clear();
+  reset_speed_b_.clear();
   state_a_ = {};
   state_b_ = {};
 }
@@ -130,10 +139,10 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     }
     const float target_a = reset_target_a_ + input.reset_direction_a - reset_input_a_;
     const float target_b = reset_target_b_ + input.reset_direction_b - reset_input_b_;
-    const float current_a =
-      calculate_current(position_a_, speed_a_, state_a_, target_a, input.angle_a, input.speed_a);
-    const float current_b =
-      calculate_current(position_b_, speed_b_, state_b_, target_b, input.angle_b, input.speed_b);
+    const float current_a = calculate_current(
+      position_a_, reset_speed_a_, state_a_, target_a, input.angle_a, input.speed_a);
+    const float current_b = calculate_current(
+      position_b_, reset_speed_b_, state_b_, target_b, input.angle_b, input.speed_b);
     const bool settled =
       std::abs(target_a - input.angle_a) < 0.015f && std::abs(target_b - input.angle_b) < 0.015f &&
       std::abs(input.speed_a) < SETTLED_SPEED_RADPS &&

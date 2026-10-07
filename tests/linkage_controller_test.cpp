@@ -185,5 +185,36 @@ extern "C" int run_tests()
     output = controller.update(input);
     if (!near(output.target_a, 2 * sp::SP_PI) || !near(output.target_b, 0)) return 30;
   }
+  {
+    app::LinkageController controller;
+    // Reproduce the stationary residual errors observed on the real reset trial.
+    app::LinkageInput input = {true, 0, 0, -0.188f, 0.024f, 0, 0, -1, true, 0, 0};
+    app::LinkageOutput output;
+    float previous_a = 0;
+    float previous_b = 0;
+    for (unsigned step = 0; step < 4000; ++step) {
+      output = controller.update(input);
+      if (output.reset_complete) return 31;
+      const float allowed_step = app::MOTOR_CURRENT_SLEW_A_PER_S * app::LINKAGE_PERIOD_S;
+      if (
+        std::abs(output.current_a - previous_a) > allowed_step + 0.00001f ||
+        std::abs(output.current_b - previous_b) > allowed_step + 0.00001f)
+        return 32;
+      if (
+        std::abs(output.current_a) > app::MOTOR_CURRENT_LIMIT_A + 0.00001f ||
+        std::abs(output.current_b) > app::MOTOR_CURRENT_LIMIT_A + 0.00001f)
+        return 33;
+      previous_a = output.current_a;
+      previous_b = output.current_b;
+    }
+    if (output.current_a < 0.19f || output.current_b > -0.14f) return 34;
+    input.angle_a = output.target_a;
+    input.angle_b = output.target_b;
+    for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
+    if (!output.reset_complete || output.current_a != 0 || output.current_b != 0) return 35;
+    input.enabled = false;
+    output = controller.update(input);
+    if (output.current_a != 0 || output.current_b != 0) return 36;
+  }
   return 0;
 }

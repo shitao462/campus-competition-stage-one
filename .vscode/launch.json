@@ -3,8 +3,9 @@
     "configurations": [
         {
             "name": "OpenOCD: Debug",
-            "cwd": "${workspaceFolder}",
-            "executable": "${workspaceFolder}/build/Debug/text3.elf",
+            // English junction avoids Windows GDB/MI issues with Chinese paths.
+            "cwd": "H:/robomaster/cboard-debug",
+            "executable": "H:/robomaster/cboard-debug/build/Debug/text3.elf",
             "request": "launch",
             "type": "cortex-debug",
             "servertype": "openocd",

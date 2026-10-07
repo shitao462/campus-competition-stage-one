@@ -65,6 +65,8 @@ private:
   sp::PID position_b_;
   sp::PID speed_a_;
   sp::PID speed_b_;
+  sp::PID reset_speed_a_;
+  sp::PID reset_speed_b_;
   bool active_ = false;
   bool reset_active_ = false;
   float reset_input_a_ = 0;
