@@ -44,7 +44,7 @@ namespace app
 {
 LinkageController::LinkageController()
 : position_a_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, SPEED_LIMIT_RADPS, 0),
-  position_b_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, SPEED_LIMIT_RADPS, 0),
+  position_b_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, 3.0f * SPEED_LIMIT_RADPS, 0),
   speed_a_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
   speed_b_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
   reset_speed_a_(
@@ -73,7 +73,7 @@ void LinkageController::reset()
 
 float LinkageController::calculate_current(
   sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
-  float measured_speed)
+  float measured_speed, float motion_scale)
 {
   state.filtered_speed += SPEED_FILTER_ALPHA * (measured_speed - state.filtered_speed);
   // Differentiate the final target so board and hand inputs share the same smoothing.
@@ -84,9 +84,12 @@ float LinkageController::calculate_current(
   const float raw_target_speed = sp::limit_max(target_step / LINKAGE_PERIOD_S, 6.0f);
   state.target_speed += TARGET_SPEED_FILTER_ALPHA * (raw_target_speed - state.target_speed);
   position.calc(target, angle);
-  const float requested_speed = sp::limit_max(position.out + state.target_speed, SPEED_LIMIT_RADPS);
-  state.speed_reference =
-    approach(state.speed_reference, requested_speed, MOTOR_ACCELERATION_RADPS2 * LINKAGE_PERIOD_S);
+  const float speed_limit = SPEED_LIMIT_RADPS * motion_scale;
+  const float position_speed = sp::limit_max(position.out, speed_limit);
+  const float requested_speed = sp::limit_max(position_speed + state.target_speed, speed_limit);
+  state.speed_reference = approach(
+    state.speed_reference, requested_speed,
+    MOTOR_ACCELERATION_RADPS2 * motion_scale * LINKAGE_PERIOD_S);
   const bool settled_candidate = std::abs(target - angle) < SETTLED_ERROR_RAD &&
                                  std::abs(measured_speed) < SETTLED_SPEED_RADPS &&
                                  std::abs(state.target_speed) < SETTLED_TARGET_SPEED_RADPS &&
@@ -201,8 +204,10 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
 
   float current_a =
     calculate_current(position_a_, speed_a_, state_a_, target_a, input.angle_a, input.speed_a);
-  float current_b =
-    calculate_current(position_b_, speed_b_, state_b_, target_b, input.angle_b, input.speed_b);
+  // A 1:3 destination needs three times the velocity and acceleration capacity.
+  const float motion_scale_b = ratio_b_ == 3.0f ? 3.0f : 1.0f;
+  float current_b = calculate_current(
+    position_b_, speed_b_, state_b_, target_b, input.angle_b, input.speed_b, motion_scale_b);
   if (manual_source_ == 1) {
     speed_a_.clear();
     state_a_ = {0, 0, input.speed_a, false};

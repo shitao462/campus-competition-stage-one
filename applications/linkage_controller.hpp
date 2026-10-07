@@ -58,7 +58,7 @@ private:
   };
   float calculate_current(
     sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
-    float measured_speed);
+    float measured_speed, float motion_scale = 1.0f);
   LoopState state_a_;
   LoopState state_b_;
   sp::PID position_a_;

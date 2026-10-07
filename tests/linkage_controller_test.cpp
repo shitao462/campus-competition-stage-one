@@ -216,5 +216,33 @@ extern "C" int run_tests()
     output = controller.update(input);
     if (output.current_a != 0 || output.current_b != 0) return 36;
   }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0.8f, 0, 0, 0.8f, 2.4f, 3};
+    app::LinkageOutput output = controller.update(input);
+    float previous_b = output.current_b;
+    for (unsigned step = 0; step < 400; ++step) {
+      input.yaw += 0.004f;
+      input.angle_a = input.yaw;
+      input.angle_b = 3 * input.yaw - 0.1f;
+      output = controller.update(input);
+      if (std::abs(output.current_b) > app::MOTOR_CURRENT_LIMIT_A + 0.00001f) return 37;
+      if (
+        std::abs(output.current_b - previous_b) >
+        app::MOTOR_CURRENT_SLEW_A_PER_S * app::LINKAGE_PERIOD_S + 0.00001f)
+        return 38;
+      if (step > 300 && output.current_b <= 0) return 39;
+      previous_b = output.current_b;
+    }
+    // Stopping the input must retain the 1:3 destination until the follower arrives.
+    input.yaw_rate = input.speed_a = input.speed_b = 0;
+    input.angle_a = output.target_a;
+    input.angle_b = output.target_b;
+    for (unsigned step = 0; step < 300; ++step) output = controller.update(input);
+    if (!near(output.target_b, 3 * input.yaw) || output.current_b != 0) return 40;
+    input.enabled = false;
+    output = controller.update(input);
+    if (output.current_a != 0 || output.current_b != 0) return 41;
+  }
   return 0;
 }
