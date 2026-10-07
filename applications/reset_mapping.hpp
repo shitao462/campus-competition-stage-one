@@ -8,14 +8,13 @@
 namespace app
 {
 // Raw encoder counts when each R mark points along the board's startup R direction.
-// Latest confirmed aligned pose: yaw_delta=-64.12/-64.09 deg, A=4006, B=3061/3062.
-// Mean yaw_delta=-64.105 deg; startup-direction offsets are A=5465, B=4520.
-// Earlier aligned poses support equal signs but have inconsistent alignment offsets.
-// Use the latest pose as the reference; verify physical alignment after loading.
-// Subtract yaw_delta * 8192 / 360 and round to obtain the startup-direction offsets.
+// New startup pose is the latest user-aligned R direction: A=3310, B=3455.
+// The capture's old yaw_delta=-17.69 deg is replaced by zero on loading at this pose.
+// Use raw aligned counts directly for this new startup reference.
+// Keep the board direction and stator orientations fixed through loading/initialization.
 // Valid for the measured stator installation and board startup direction.
-constexpr uint16_t MOTOR_A_R_ALIGNMENT_ENCODER = 5465;
-constexpr uint16_t MOTOR_B_R_ALIGNMENT_ENCODER = 4520;
+constexpr uint16_t MOTOR_A_R_ALIGNMENT_ENCODER = 3310;
+constexpr uint16_t MOTOR_B_R_ALIGNMENT_ENCODER = 3455;
 static_assert(MOTOR_A_R_ALIGNMENT_ENCODER < 8192 && MOTOR_B_R_ALIGNMENT_ENCODER < 8192);
 
 inline float mapped_reset_direction(
