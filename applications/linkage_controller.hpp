@@ -86,6 +86,8 @@ private:
   unsigned protected_follower_ = 0;
   float takeover_still_s_ = 0;
   bool takeover_armed_ = false;
+  bool manual_ready_a_ = false;
+  bool manual_ready_b_ = false;
   unsigned manual_source_ = 0;
 };
 }  // namespace app

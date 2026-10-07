@@ -510,5 +510,96 @@ extern "C" int run_tests()
         return 67;
     }
   }
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    for (unsigned first_source : {1u, 2u}) {
+      app::LinkageController controller;
+      app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
+      controller.update(input);
+      app::LinkageOutput output;
+      for (unsigned step = 0; step < 50; ++step) {
+        if (first_source == 1) {
+          input.angle_a += 0.005f;
+          input.speed_a = 1;
+        }
+        else {
+          input.angle_b += 0.005f;
+          input.speed_b = 1;
+        }
+        output = controller.update(input);
+      }
+      // Alternate inputs after settling, with a slow displacement below the old 1.43-deg gate.
+      unsigned next_source = 3 - first_source;
+      for (unsigned round = 0; round < 4; ++round) {
+        input.angle_a = output.target_a;
+        input.angle_b = output.target_b;
+        input.speed_a = input.speed_b = 0;
+        for (unsigned step = 0; step < 200; ++step) output = controller.update(input);
+        if (output.manual_source != 0) return 68;
+        const float direction = round % 2 ? -1.0f : 1.0f;
+        for (unsigned step = 0; step < 20; ++step) {
+          if (next_source == 1) {
+            input.angle_a += direction * 0.0006f;
+            input.speed_a = direction * 0.12f;
+          }
+          else {
+            input.angle_b += direction * 0.0006f;
+            input.speed_b = direction * 0.12f;
+          }
+          output = controller.update(input);
+          // The candidate must yield during qualification, before the source is confirmed.
+          if (step >= 12 && (next_source == 1 ? output.current_a : output.current_b) != 0)
+            return 69;
+        }
+        if (output.manual_source != next_source) return 70;
+        if (!near(output.target_b, ratio * output.target_a)) return 71;
+        next_source = 3 - next_source;
+      }
+    }
+  }
+  for (unsigned first_source : {1u, 2u}) {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
+    controller.update(input);
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 50; ++step) {
+      if (first_source == 1) {
+        input.angle_a += 0.005f;
+        input.speed_a = 1;
+      }
+      else {
+        input.angle_b += 0.005f;
+        input.speed_b = 1;
+      }
+      output = controller.update(input);
+    }
+    input.speed_a = input.speed_b = 0;
+    if (first_source == 1)
+      input.angle_b = output.target_b + 0.04f;
+    else
+      input.angle_a = output.target_a + 0.04f;
+    for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
+    const float retained_a = output.target_a;
+    const float retained_b = output.target_b;
+    // A short new motion against the old holding torque must yield before 40-ms confirmation.
+    for (unsigned step = 0; step < 4; ++step) {
+      if (first_source == 1) {
+        input.angle_b += 0.0006f;
+        input.speed_b = 0.12f;
+      }
+      else {
+        input.angle_a += 0.0006f;
+        input.speed_a = 0.12f;
+      }
+      output = controller.update(input);
+      if (output.manual_source != first_source) return 72;
+      if (output.current_a != 0 || output.current_b != 0) return 73;
+    }
+    // Cancel a brief candidate; keep the linkage reference and restart from zero current.
+    input.speed_a = input.speed_b = 0;
+    output = controller.update(input);
+    if (output.manual_source != first_source) return 74;
+    if (!near(output.target_a, retained_a) || !near(output.target_b, retained_b)) return 75;
+    if (std::abs(output.current_a) > 0.00401f || std::abs(output.current_b) > 0.00401f) return 76;
+  }
   return 0;
 }

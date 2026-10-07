@@ -116,6 +116,24 @@ extern "C" void imu_task(void const * argument)
       if (length > 0 && length < static_cast<int>(sizeof(line))) {
         HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(line), length, 20);
       }
+      // SerialPlot includes only this prefix; existing diagnostic lines stay readable.
+      // Wait for initialized attitude fields and use the same relative yaw as reset telemetry.
+      if (attitude_initialized && sample.ready) {
+        const app::MotorStatus status = app::get_motor_status();
+        if (
+          status.imu_ready && std::isfinite(attitude.roll) && std::isfinite(attitude.pitch) &&
+          std::isfinite(status.board_yaw_delta)) {
+          char plot_line[80];
+          const int plot_length = std::snprintf(
+            plot_line, sizeof(plot_line), "IMU:%.3f,%.3f,%.3f\r\n",
+            static_cast<double>(attitude.roll * RAD_TO_DEG),
+            static_cast<double>(attitude.pitch * RAD_TO_DEG),
+            static_cast<double>(status.board_yaw_delta * RAD_TO_DEG));
+          if (plot_length > 0 && plot_length < static_cast<int>(sizeof(plot_line))) {
+            HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(plot_line), plot_length, 20);
+          }
+        }
+      }
       last_print_ms = now_ms;
     }
     if (now_ms - last_status_print_ms >= STATUS_PRINT_INTERVAL_MS) {

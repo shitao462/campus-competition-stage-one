@@ -42,4 +42,5 @@ assert result == 0, f"Control scenario failed: {result}"
 print("PASS: ratios, both manual inputs, retained reference, ratio transition, "
       "disable, current limits/slew/reversal, settled torque release, encoder wrapping, "
       "Mahony yaw, continuous low-speed tracking with 10 ms target updates, "
-      "fixed encoder mapping, shortest-path reset, completion, and mode transitions.")
+      "fixed encoder mapping, shortest-path reset, completion, mode transitions, "
+      "slow alternating hand inputs, candidate torque release, and cancellation recovery.")
