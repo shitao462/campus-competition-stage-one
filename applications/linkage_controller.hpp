@@ -20,6 +20,9 @@ struct LinkageInput
   float speed_a;
   float speed_b;
   float ratio_b;
+  bool reset_requested = false;
+  float reset_direction_a = 0;
+  float reset_direction_b = 0;
 };
 
 struct LinkageOutput
@@ -31,6 +34,7 @@ struct LinkageOutput
   float current_b;
   float reference_yaw;
   unsigned manual_source;  // 0: board, 1: motor A, 2: motor B.
+  bool reset_complete = false;
 };
 
 class LinkageController
@@ -62,6 +66,12 @@ private:
   sp::PID speed_a_;
   sp::PID speed_b_;
   bool active_ = false;
+  bool reset_active_ = false;
+  float reset_input_a_ = 0;
+  float reset_input_b_ = 0;
+  float reset_target_a_ = 0;
+  float reset_target_b_ = 0;
+  float reset_settled_s_ = 0;
   float origin_a_ = 0;
   float origin_b_ = 0;
   float yaw_origin_ = 0;

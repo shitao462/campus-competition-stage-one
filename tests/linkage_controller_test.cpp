@@ -3,6 +3,7 @@
 #include <cmath>
 #include <initializer_list>
 
+#include "reset_mapping.hpp"
 #include "tools/mahony/mahony.hpp"
 
 namespace
@@ -134,6 +135,55 @@ extern "C" int run_tests()
     input.yaw_rate = input.speed_a = input.speed_b = 0;
     for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
     if (output.current_a != 0 || output.current_b != 0) return 20;
+  }
+  if (!near(app::mapped_reset_direction(0.2f, 2048, 1), 0.2f + sp::SP_PI / 2)) return 21;
+  if (!near(app::mapped_reset_direction(0.2f, 2048, -1), 0.2f - sp::SP_PI / 2)) return 22;
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    app::LinkageController controller;
+    // Arbitrary startup rotor angles must return to the fixed mapping, not startup positions.
+    app::LinkageInput input = {true, 0, 0, 4 * sp::SP_PI + 1, -4 * sp::SP_PI - 1, 0, 0, ratio,
+                               true, 0, 0};
+    auto output = controller.update(input);
+    if (!near(output.target_a, 4 * sp::SP_PI) || !near(output.target_b, -4 * sp::SP_PI)) return 23;
+    if (output.current_a >= 0 || output.current_b <= 0 || output.manual_source != 0) return 24;
+    const float target_a = output.target_a;
+    const float target_b = output.target_b;
+    input.angle_a += 0.1f;
+    input.speed_a = 1;
+    for (unsigned step = 0; step < 20; ++step) output = controller.update(input);
+    if (
+      output.manual_source != 0 || !near(output.target_a, target_a) ||
+      !near(output.target_b, target_b))
+      return 25;
+    input.yaw = 0.2f;
+    input.yaw_rate = 0.2f;
+    input.reset_direction_a += 0.2f;
+    input.reset_direction_b += 0.2f;
+    output = controller.update(input);
+    if (!near(output.target_a, target_a + 0.2f) || !near(output.target_b, target_b + 0.2f))
+      return 26;
+    input.angle_a = output.target_a;
+    input.angle_b = output.target_b;
+    input.speed_a = input.speed_b = input.yaw_rate = 0;
+    for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
+    if (!output.reset_complete || output.current_a != 0 || output.current_b != 0) return 27;
+    input.reset_requested = false;
+    output = controller.update(input);
+    if (
+      !near(output.target_a, input.angle_a) || !near(output.target_b, input.angle_b) ||
+      output.reset_complete)
+      return 28;
+    input.enabled = false;
+    output = controller.update(input);
+    if (output.enabled || output.current_a != 0 || output.current_b != 0) return 29;
+    // A CAN reconnection can restart encoder unwrapping; fixed mapping still selects the same direction.
+    input.enabled = true;
+    input.reset_requested = true;
+    input.angle_a = 6.1f;
+    input.angle_b = 0.1f;
+    input.reset_direction_a = input.reset_direction_b = 0;
+    output = controller.update(input);
+    if (!near(output.target_a, 2 * sp::SP_PI) || !near(output.target_b, 0)) return 30;
   }
   return 0;
 }

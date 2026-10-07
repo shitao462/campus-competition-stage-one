@@ -50,6 +50,8 @@ LinkageController::LinkageController()
 void LinkageController::reset()
 {
   active_ = false;
+  reset_active_ = false;
+  reset_settled_s_ = 0;
   manual_source_ = 0;
   detection_a_s_ = detection_b_s_ = release_s_ = 0;
   position_a_.clear();
@@ -109,6 +111,35 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     (input.ratio_b != 0.5f && input.ratio_b != -1.0f && input.ratio_b != 3.0f)) {
     reset();
     return {};
+  }
+  if (input.reset_requested) {
+    if (!std::isfinite(input.reset_direction_a) || !std::isfinite(input.reset_direction_b)) {
+      reset();
+      return {};
+    }
+    if (!reset_active_) {
+      reset();
+      reset_active_ = true;
+      reset_input_a_ = input.reset_direction_a;
+      reset_input_b_ = input.reset_direction_b;
+      // Select a nearest equivalent revolution once; keep that branch until leaving UP.
+      reset_target_a_ = input.angle_a + sp::limit_angle(input.reset_direction_a - input.angle_a);
+      reset_target_b_ = input.angle_b + sp::limit_angle(input.reset_direction_b - input.angle_b);
+      state_a_.filtered_speed = input.speed_a;
+      state_b_.filtered_speed = input.speed_b;
+    }
+    const float target_a = reset_target_a_ + input.reset_direction_a - reset_input_a_;
+    const float target_b = reset_target_b_ + input.reset_direction_b - reset_input_b_;
+    const float current_a =
+      calculate_current(position_a_, speed_a_, state_a_, target_a, input.angle_a, input.speed_a);
+    const float current_b =
+      calculate_current(position_b_, speed_b_, state_b_, target_b, input.angle_b, input.speed_b);
+    const bool settled =
+      std::abs(target_a - input.angle_a) < 0.015f && std::abs(target_b - input.angle_b) < 0.015f &&
+      std::abs(input.speed_a) < SETTLED_SPEED_RADPS &&
+      std::abs(input.speed_b) < SETTLED_SPEED_RADPS && std::abs(input.yaw_rate) < BOARD_STILL_RADPS;
+    reset_settled_s_ = settled ? reset_settled_s_ + LINKAGE_PERIOD_S : 0;
+    return {true, target_a, target_b, current_a, current_b, input.yaw, 0, reset_settled_s_ >= 0.2f};
   }
   // Entering MID or changing ratio starts from the current positions: no sudden return.
   if (!active_ || input.ratio_b != ratio_b_) {

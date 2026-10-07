@@ -19,6 +19,7 @@ constexpr uint32_t IMU_SAMPLE_INTERVAL_MS = 10;
 constexpr uint32_t PRINT_INTERVAL_MS = 100;
 constexpr uint32_t CALIBRATION_SAMPLES = 200;
 constexpr uint32_t STATUS_PRINT_INTERVAL_MS = 1000;
+constexpr float RAD_TO_DEG = 180.0f / sp::SP_PI;
 
 app::ImuStatus imu_status = {};
 
@@ -134,14 +135,16 @@ extern "C" void imu_task(void const * argument)
       char linkage_line[256];
       const int linkage_length = std::snprintf(
         linkage_line, sizeof(linkage_line),
-        "imu_ready=%u yaw=%.3f ratio_b=%.1f angle=%.3f,%.3f target=%.3f,%.3f "
-        "current_A=%.3f,%.3f ref_yaw=%.3f manual=%u\r\n",
-        static_cast<unsigned>(status.imu_ready), static_cast<double>(status.yaw),
-        static_cast<double>(status.ratio_b), static_cast<double>(status.angle_a),
-        static_cast<double>(status.angle_b), static_cast<double>(status.target_a),
-        static_cast<double>(status.target_b), static_cast<double>(status.current_a),
-        static_cast<double>(status.current_b), static_cast<double>(status.reference_yaw),
-        status.manual_source);
+        "imu_ready=%u ratio_b=%.1f yaw_rel_deg=%.2f enc=%u,%u error_deg=%.2f,%.2f "
+        "current_A=%.3f,%.3f manual=%u reset=%u done=%u\r\n",
+        static_cast<unsigned>(status.imu_ready), static_cast<double>(status.ratio_b),
+        static_cast<double>(status.board_yaw_delta * RAD_TO_DEG),
+        static_cast<unsigned>(status.encoder_a), static_cast<unsigned>(status.encoder_b),
+        static_cast<double>((status.target_a - status.angle_a) * RAD_TO_DEG),
+        static_cast<double>((status.target_b - status.angle_b) * RAD_TO_DEG),
+        static_cast<double>(status.current_a), static_cast<double>(status.current_b),
+        status.manual_source, static_cast<unsigned>(status.reset_mode),
+        static_cast<unsigned>(status.reset_complete));
       if (linkage_length > 0 && linkage_length < static_cast<int>(sizeof(linkage_line))) {
         HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(linkage_line), linkage_length, 40);
       }

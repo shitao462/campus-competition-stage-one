@@ -24,6 +24,11 @@ struct MotorStatus
   float ratio_b;
   float reference_yaw;
   unsigned manual_source;
+  bool reset_mode;
+  bool reset_complete;
+  float board_yaw_delta;
+  uint16_t encoder_a;
+  uint16_t encoder_b;
 };
 
 MotorStatus get_motor_status();

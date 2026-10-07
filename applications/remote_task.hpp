@@ -11,6 +11,7 @@ struct RemoteStatus
   bool right_switch_down;
   bool linkage_enabled;
   float motor_b_ratio;
+  bool reset_requested;
 };
 
 RemoteStatus get_remote_status();

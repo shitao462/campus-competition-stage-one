@@ -9,6 +9,7 @@
 #include "linkage_controller.hpp"
 #include "main.h"
 #include "remote_task.hpp"
+#include "reset_mapping.hpp"
 #include "task.h"
 
 namespace
@@ -40,6 +41,7 @@ struct MotorFeedback
   float angle = 0;
   float speed = 0;
   uint8_t temperature_c = 0;
+  uint16_t encoder = 0;
 };
 
 app::MotorStatus motor_status = {};
@@ -103,6 +105,8 @@ extern "C" void motor_task(void const * argument)
   app::LinkageController controller;
   uint32_t transmit_failures = 0;
   uint32_t last_command_ms = osKernelSysTick() - MOTOR_COMMAND_INTERVAL_MS;
+  bool board_reference_ready = false;
+  float board_initial_yaw = 0;
 
   while (true) {
     const uint32_t now_ms = osKernelSysTick();
@@ -130,6 +134,7 @@ extern "C" void motor_task(void const * argument)
             feedback->unwrapper.reset();
           }
           feedback->angle = direction * feedback->unwrapper.update(encoder * ENCODER_TO_RAD);
+          feedback->encoder = encoder;
           feedback->speed = direction * speed_rpm * RPM_TO_RADPS;
           feedback->temperature_c = data[6];
           feedback->received = true;
@@ -145,17 +150,28 @@ extern "C" void motor_task(void const * argument)
     const bool alive_b =
       feedback_b.received && now_ms - feedback_b.stamp_ms < MOTOR_FEEDBACK_TIMEOUT_MS;
     const bool imu_ready = imu_status.ready && now_ms - imu_status.stamp_ms < IMU_TIMEOUT_MS;
-    const bool enabled = MOTOR_CURRENT_CONTROL && remote_status.linkage_enabled && alive_a &&
-                         alive_b && imu_ready &&
-                         feedback_a.temperature_c < MOTOR_TEMPERATURE_LIMIT_C &&
-                         feedback_b.temperature_c < MOTOR_TEMPERATURE_LIMIT_C;
+    // Only board yaw is relative. Motor reset targets use configured mechanical positions.
+    if (imu_ready && !board_reference_ready) {
+      board_initial_yaw = imu_status.yaw;
+      board_reference_ready = true;
+    }
+    const float board_yaw_delta = imu_status.yaw - board_initial_yaw;
+    const bool enabled =
+      MOTOR_CURRENT_CONTROL && (remote_status.linkage_enabled || remote_status.reset_requested) &&
+      alive_a && alive_b && imu_ready && feedback_a.temperature_c < MOTOR_TEMPERATURE_LIMIT_C &&
+      feedback_b.temperature_c < MOTOR_TEMPERATURE_LIMIT_C;
     if (!enabled) controller.reset();
     if (now_ms - last_command_ms >= MOTOR_COMMAND_INTERVAL_MS) {
       // A missed control deadline releases output and captures a fresh origin on recovery.
       const bool on_time = now_ms - last_command_ms <= 2 * MOTOR_COMMAND_INTERVAL_MS;
       const app::LinkageOutput output = controller.update(
         {enabled && on_time, imu_status.yaw, imu_status.yaw_rate, feedback_a.angle,
-         feedback_b.angle, feedback_a.speed, feedback_b.speed, remote_status.motor_b_ratio});
+         feedback_b.angle, feedback_a.speed, feedback_b.speed, remote_status.motor_b_ratio,
+         remote_status.reset_requested,
+         app::mapped_reset_direction(
+           board_yaw_delta, app::MOTOR_A_R_ALIGNMENT_ENCODER, MOTOR_A_DIRECTION),
+         app::mapped_reset_direction(
+           board_yaw_delta, app::MOTOR_B_R_ALIGNMENT_ENCODER, MOTOR_B_DIRECTION)});
       if (!send_current_command(MOTOR_COMMAND_IDS[0], output.current_a, output.current_b)) {
         ++transmit_failures;
       }
@@ -179,7 +195,12 @@ extern "C" void motor_task(void const * argument)
         output.current_b,
         remote_status.motor_b_ratio,
         output.reference_yaw,
-        output.manual_source};
+        output.manual_source,
+        remote_status.reset_requested,
+        output.reset_complete,
+        board_yaw_delta,
+        feedback_a.encoder,
+        feedback_b.encoder};
       taskEXIT_CRITICAL();
     }
     osDelay(MOTOR_TASK_INTERVAL_MS);

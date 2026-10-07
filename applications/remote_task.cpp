@@ -19,11 +19,12 @@ RemoteStatus get_remote_status()
   const bool alive = remote.is_alive(osKernelSysTick());
   const bool right_switch_down = alive && remote.sw_r == sp::DBusSwitchMode::DOWN;
   const bool linkage_enabled = alive && remote.sw_r == sp::DBusSwitchMode::MID;
+  const bool reset_requested = alive && remote.sw_r == sp::DBusSwitchMode::UP;
   const float motor_b_ratio = remote.sw_l == sp::DBusSwitchMode::DOWN
                                 ? 0.5f
                                 : (remote.sw_l == sp::DBusSwitchMode::MID ? -1.0f : 3.0f);
   taskEXIT_CRITICAL();
-  return {alive, right_switch_down, linkage_enabled, motor_b_ratio};
+  return {alive, right_switch_down, linkage_enabled, motor_b_ratio, reset_requested};
 }
 }  // namespace app
 
