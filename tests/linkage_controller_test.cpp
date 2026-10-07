@@ -55,7 +55,7 @@ extern "C" int run_tests()
     input.angle_a = output.target_a;
     input.angle_b = output.target_b;
     input.speed_a = input.speed_b = 0;
-    for (unsigned step = 0; step < 70; ++step) output = controller.update(input);
+    for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
     const float retained_a = output.target_a;
     if (output.manual_source != 0 || !near(output.target_a, input.angle_a)) return 7;
     input.yaw += 0.2f;
@@ -218,11 +218,12 @@ extern "C" int run_tests()
   }
   {
     app::LinkageController controller;
-    app::LinkageInput input = {true, 0, 0.8f, 0, 0, 0.8f, 2.4f, 3};
+    // Continuous tracking below the reduced B 2.4 rad/s limit must still drive forward.
+    app::LinkageInput input = {true, 0, 0.7f, 0, 0, 0.7f, 2.1f, 3};
     app::LinkageOutput output = controller.update(input);
     float previous_b = output.current_b;
     for (unsigned step = 0; step < 400; ++step) {
-      input.yaw += 0.004f;
+      input.yaw += 0.0035f;
       input.angle_a = input.yaw;
       input.angle_b = 3 * input.yaw - 0.1f;
       output = controller.update(input);
@@ -302,6 +303,212 @@ extern "C" int run_tests()
     input.speed_b = 0.2f;
     for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
     if (output.current_b >= 0) return 48;
+  }
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    for (unsigned source : {1u, 2u}) {
+      app::LinkageController controller;
+      app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
+      controller.update(input);
+      app::LinkageOutput output;
+      for (unsigned step = 0; step < 50; ++step) {
+        if (source == 1) {
+          input.angle_a += 0.005f;
+          input.speed_a = 1;
+        }
+        else {
+          input.angle_b += 0.005f;
+          input.speed_b = 1;
+        }
+        output = controller.update(input);
+      }
+      const float retained_a = output.target_a;
+      const float retained_b = output.target_b;
+      input.speed_a = input.speed_b = 0;
+      // The follower continues away from its goal after the operator stops the source.
+      for (unsigned step = 0; step < 120; ++step) {
+        if (source == 1) {
+          input.angle_b = retained_b + 0.1f + step * 0.001f;
+          input.speed_b = 0.2f;
+        }
+        else {
+          input.angle_a = retained_a + 0.1f + step * 0.001f;
+          input.speed_a = 0.2f;
+        }
+        output = controller.update(input);
+        if (output.manual_source != source) return 49;
+        if (!near(output.target_a, retained_a) || !near(output.target_b, retained_b)) return 50;
+        if ((source == 1 ? output.current_a : output.current_b) != 0) return 51;
+      }
+      // Only a settled follower permits a new hand-input source to take over.
+      input.angle_a = retained_a;
+      input.angle_b = retained_b;
+      input.speed_a = input.speed_b = 0;
+      for (unsigned step = 0; step < 200; ++step) output = controller.update(input);
+      if (output.manual_source != 0) return 52;
+      for (unsigned step = 0; step < 50; ++step) {
+        if (source == 1) {
+          input.angle_b += 0.005f;
+          input.speed_b = 1;
+        }
+        else {
+          input.angle_a += 0.005f;
+          input.speed_a = 1;
+        }
+        output = controller.update(input);
+      }
+      if (output.manual_source != 3 - source) return 53;
+    }
+  }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
+    controller.update(input);
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 50; ++step) {
+      input.angle_a += 0.005f;
+      input.speed_a = 1;
+      output = controller.update(input);
+    }
+    const float retained_a = output.target_a;
+    const float retained_b = output.target_b;
+    input.speed_a = 0;
+    input.angle_b = retained_b + 0.2f;
+    input.speed_b = 0.2f;
+    for (unsigned step = 0; step < 80; ++step) output = controller.update(input);
+    // Board motion must work even while B is still recovering from a hand-input overshoot.
+    input.yaw = 0.1f;
+    input.yaw_rate = 0.5f;
+    output = controller.update(input);
+    if (output.manual_source != 0 || !near(output.target_a, retained_a + 0.1f)) return 54;
+    if (!near(output.target_b, retained_b + 0.3f)) return 55;
+    input.yaw_rate = 0;
+    input.angle_b = output.target_b + 0.2f;
+    for (unsigned step = 0; step < 50; ++step) {
+      input.angle_b += 0.001f;
+      output = controller.update(input);
+      if (output.manual_source != 0 || !near(output.target_a, retained_a + 0.1f)) return 56;
+    }
+    input.enabled = false;
+    output = controller.update(input);
+    if (output.enabled || output.current_a != 0 || output.current_b != 0) return 57;
+  }
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
+    controller.update(input);
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 50; ++step) {
+      input.angle_a += 0.005f;
+      input.speed_a = 1;
+      output = controller.update(input);
+    }
+    input.speed_a = 0;
+    const float goal = output.target_b;
+    // Build a negative approach command while B is far above a fixed destination.
+    input.angle_b = goal + 1;
+    for (unsigned step = 0; step < 180; ++step) output = controller.update(input);
+    input.angle_b = goal - 0.05f;
+    for (unsigned step = 0; step < 80; ++step) output = controller.update(input);
+    if (output.manual_source != 1 || output.current_a != 0 || output.current_b <= 0) return 58;
+    if (!near(output.target_b, goal)) return 59;
+  }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
+    controller.update(input);
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 50; ++step) {
+      input.angle_a += 0.005f;
+      input.speed_a = 1;
+      output = controller.update(input);
+    }
+    input.speed_a = 0;
+    const float goal = output.target_b;
+    input.angle_b = goal - 2;
+    for (unsigned step = 0; step < 180; ++step) output = controller.update(input);
+    // B is still approaching, only 1.15 degrees short, at 1 rad/s. Brake before crossing.
+    input.angle_b = goal - 0.02f;
+    input.speed_b = 1;
+    float previous_current = output.current_b;
+    for (unsigned step = 0; step < 70; ++step) {
+      output = controller.update(input);
+      if (
+        std::abs(output.current_b - previous_current) >
+        app::MOTOR_CURRENT_SLEW_A_PER_S * app::LINKAGE_PERIOD_S + 0.00001f)
+        return 60;
+      if (std::abs(output.current_b) > app::MOTOR_CURRENT_LIMIT_A + 0.00001f) return 61;
+      previous_current = output.current_b;
+    }
+    if (output.current_b >= 0 || output.manual_source != 1 || output.current_a != 0) return 62;
+    if (!near(output.target_b, goal)) return 63;
+  }
+  for (float ratio : {0.5f, -1.0f, 3.0f}) {
+    for (unsigned source : {1u, 2u}) {
+      app::LinkageController controller;
+      app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
+      controller.update(input);
+      app::LinkageOutput output;
+      for (unsigned step = 0; step < 50; ++step) {
+        if (source == 1) {
+          input.angle_a += 0.005f;
+          input.speed_a = 1;
+        }
+        else {
+          input.angle_b += 0.005f;
+          input.speed_b = 1;
+        }
+        output = controller.update(input);
+      }
+      input.speed_a = input.speed_b = 0;
+      // The follower can be stationary short of its goal because of friction or a hand hold.
+      if (source == 1)
+        input.angle_b = output.target_b + 0.04f;
+      else
+        input.angle_a = output.target_a + 0.04f;
+      for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
+      for (unsigned step = 0; step < 50; ++step) {
+        if (source == 1) {
+          input.angle_b += 0.005f;
+          input.speed_b = 1;
+        }
+        else {
+          input.angle_a += 0.005f;
+          input.speed_a = 1;
+        }
+        output = controller.update(input);
+      }
+      if (output.manual_source != 3 - source) return 64;
+      if ((source == 1 ? output.current_b : output.current_a) != 0) return 65;
+      if (!near(output.target_b, ratio * output.target_a)) return 66;
+    }
+  }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
+    controller.update(input);
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 50; ++step) {
+      input.angle_a += 0.005f;
+      input.speed_a = 1;
+      output = controller.update(input);
+    }
+    const float goal = output.target_b;
+    input.angle_b = goal + 0.04f;
+    input.speed_a = input.speed_b = 0;
+    for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
+    // A servo movement toward the goal consumes the rest-based handover opportunity.
+    input.speed_b = -0.2f;
+    for (unsigned step = 0; step < 20; ++step) {
+      input.angle_b -= 0.001f;
+      output = controller.update(input);
+    }
+    // Its subsequent uninterrupted overshoot must not become a new B hand input.
+    for (unsigned step = 0; step < 100; ++step) {
+      input.angle_b -= 0.001f;
+      output = controller.update(input);
+      if (output.manual_source != 1 || output.current_a != 0 || !near(output.target_b, goal))
+        return 67;
+    }
   }
   return 0;
 }

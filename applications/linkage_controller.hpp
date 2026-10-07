@@ -61,7 +61,7 @@ private:
   float calculate_current(
     sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
     float measured_speed, float motion_scale = 1.0f, bool circular_target = false,
-    bool stabilize_arrival = false);
+    bool stabilize_arrival = false, bool brake_on_crossing = false, bool soft_landing = false);
   LoopState state_a_;
   LoopState state_b_;
   sp::PID position_a_;
@@ -81,6 +81,11 @@ private:
   float detection_a_s_ = 0;
   float detection_b_s_ = 0;
   float release_s_ = 0;
+  float follower_settled_s_ = 0;
+  float manual_stop_yaw_ = 0;
+  unsigned protected_follower_ = 0;
+  float takeover_still_s_ = 0;
+  bool takeover_armed_ = false;
   unsigned manual_source_ = 0;
 };
 }  // namespace app
