@@ -104,6 +104,7 @@ extern "C" void motor_task(void const * argument)
   MotorFeedback feedback_b;
   app::LinkageController controller;
   uint32_t transmit_failures = 0;
+  uint32_t late_commands = 0;
   uint32_t last_command_ms = osKernelSysTick() - MOTOR_COMMAND_INTERVAL_MS;
   bool board_reference_ready = false;
   float board_initial_yaw = 0;
@@ -162,16 +163,18 @@ extern "C" void motor_task(void const * argument)
       feedback_b.temperature_c < MOTOR_TEMPERATURE_LIMIT_C;
     if (!enabled) controller.reset();
     if (now_ms - last_command_ms >= MOTOR_COMMAND_INTERVAL_MS) {
-      // A missed control deadline releases output and captures a fresh origin on recovery.
+      // A missed deadline releases torque while preserving the unfinished ratio targets.
       const bool on_time = now_ms - last_command_ms <= 2 * MOTOR_COMMAND_INTERVAL_MS;
+      if (!on_time) ++late_commands;
       const app::LinkageOutput output = controller.update(
-        {enabled && on_time, imu_status.yaw, imu_status.yaw_rate, feedback_a.angle,
-         feedback_b.angle, feedback_a.speed, feedback_b.speed, remote_status.motor_b_ratio,
+        {enabled, imu_status.yaw, imu_status.yaw_rate, feedback_a.angle, feedback_b.angle,
+         feedback_a.speed, feedback_b.speed, remote_status.motor_b_ratio,
          remote_status.reset_requested,
          app::mapped_reset_direction(
            board_yaw_delta, app::MOTOR_A_R_ALIGNMENT_ENCODER, MOTOR_A_DIRECTION),
          app::mapped_reset_direction(
-           board_yaw_delta, app::MOTOR_B_R_ALIGNMENT_ENCODER, MOTOR_B_DIRECTION)});
+           board_yaw_delta, app::MOTOR_B_R_ALIGNMENT_ENCODER, MOTOR_B_DIRECTION),
+         !on_time});
       if (!send_current_command(MOTOR_COMMAND_IDS[0], output.current_a, output.current_b)) {
         ++transmit_failures;
       }
@@ -200,7 +203,9 @@ extern "C" void motor_task(void const * argument)
         output.reset_complete,
         board_yaw_delta,
         feedback_a.encoder,
-        feedback_b.encoder};
+        feedback_b.encoder,
+        feedback_b.speed,
+        late_commands};
       taskEXIT_CRITICAL();
     }
     osDelay(MOTOR_TASK_INTERVAL_MS);

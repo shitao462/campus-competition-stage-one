@@ -42,6 +42,7 @@ extern "C" void imu_task(void const * argument)
   (void)argument;
   imu.init();
   uint32_t last_print_ms = 0;
+  bool print_control_trace = false;
   uint32_t last_status_print_ms = 0;
   uint32_t calibration_samples = 0;
   float gyro_bias[3] = {};
@@ -107,14 +108,34 @@ extern "C" void imu_task(void const * argument)
     imu_status = sample;
     taskEXIT_CRITICAL();
     if (now_ms - last_print_ms >= PRINT_INTERVAL_MS) {
-      char line[160];
-      const int length = std::snprintf(
-        line, sizeof(line), "acc_mps2=%.3f,%.3f,%.3f gyro_radps=%.3f,%.3f,%.3f\r\n",
-        static_cast<double>(imu.acc[0]), static_cast<double>(imu.acc[1]),
-        static_cast<double>(imu.acc[2]), static_cast<double>(imu.gyro[0]),
-        static_cast<double>(imu.gyro[1]), static_cast<double>(imu.gyro[2]));
-      if (length > 0 && length < static_cast<int>(sizeof(line))) {
-        HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(line), length, 20);
+      // Alternate raw IMU and control trace rather than adding UART work to the sample loop.
+      // Each remains 5 Hz; the IMU: three-angle plot below stays at 10 Hz.
+      print_control_trace = !print_control_trace;
+      if (print_control_trace) {
+        const app::MotorStatus status = app::get_motor_status();
+        char trace[160];
+        const int trace_length = std::snprintf(
+          trace, sizeof(trace), "CTRL:%lu,%.2f,%.2f,%.2f,%.3f,%.3f,%u,%u,%u,%lu,%lu\r\n",
+          static_cast<unsigned long>(now_ms), static_cast<double>(status.angle_a * RAD_TO_DEG),
+          static_cast<double>(status.angle_b * RAD_TO_DEG),
+          static_cast<double>(status.target_b * RAD_TO_DEG), static_cast<double>(status.speed_b),
+          static_cast<double>(status.current_b), status.manual_source,
+          static_cast<unsigned>(status.output_disabled), static_cast<unsigned>(status.reset_mode),
+          static_cast<unsigned long>(status.late_commands),
+          static_cast<unsigned long>(status.transmit_failures));
+        if (trace_length > 0 && trace_length < static_cast<int>(sizeof(trace)))
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(trace), trace_length, 20);
+      }
+      else {
+        char line[160];
+        const int length = std::snprintf(
+          line, sizeof(line), "acc_mps2=%.3f,%.3f,%.3f gyro_radps=%.3f,%.3f,%.3f\r\n",
+          static_cast<double>(imu.acc[0]), static_cast<double>(imu.acc[1]),
+          static_cast<double>(imu.acc[2]), static_cast<double>(imu.gyro[0]),
+          static_cast<double>(imu.gyro[1]), static_cast<double>(imu.gyro[2]));
+        if (length > 0 && length < static_cast<int>(sizeof(line))) {
+          HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t *>(line), length, 20);
+        }
       }
       // SerialPlot includes only this prefix; existing diagnostic lines stay readable.
       // Wait for initialized attitude fields and use the same relative yaw as reset telemetry.

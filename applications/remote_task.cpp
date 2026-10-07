@@ -31,6 +31,7 @@ RemoteStatus get_remote_status()
 extern "C" void remote_task(void const * argument)
 {
   (void)argument;
+
   remote.request();
 
   while (true) {

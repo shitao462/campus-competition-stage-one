@@ -29,6 +29,8 @@ struct MotorStatus
   float board_yaw_delta;
   uint16_t encoder_a;
   uint16_t encoder_b;
+  float speed_b;
+  uint32_t late_commands;
 };
 
 MotorStatus get_motor_status();

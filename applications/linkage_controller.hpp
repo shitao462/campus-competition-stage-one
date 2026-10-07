@@ -23,6 +23,7 @@ struct LinkageInput
   bool reset_requested = false;
   float reset_direction_a = 0;
   float reset_direction_b = 0;
+  bool control_paused = false;
 };
 
 struct LinkageOutput
@@ -54,6 +55,7 @@ private:
     bool target_initialized = false;
     float previous_target = 0;
     float target_speed = 0;
+    float target_still_s = 0;
     float settled_s = 0;
     float previous_error = 0;
     bool arrival_latched = false;
@@ -61,13 +63,16 @@ private:
   float calculate_current(
     sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
     float measured_speed, float motion_scale = 1.0f, bool circular_target = false,
-    bool stabilize_arrival = false, bool brake_on_crossing = false, bool soft_landing = false);
+    bool stabilize_arrival = false, bool brake_on_crossing = false, bool stop_feedforward = false,
+    bool target_stopped = false, float acceleration_limit = MOTOR_ACCELERATION_RADPS2);
   LoopState state_a_;
   LoopState state_b_;
   sp::PID position_a_;
   sp::PID position_b_;
+  sp::PID position_b_three_;
   sp::PID speed_a_;
   sp::PID speed_b_;
+  sp::PID speed_b_three_;
   sp::PID reset_speed_a_;
   sp::PID reset_speed_b_;
   bool active_ = false;
@@ -76,16 +81,12 @@ private:
   float origin_a_ = 0;
   float origin_b_ = 0;
   float yaw_origin_ = 0;
+  float board_detection_yaw_ = 0;
   float offset_ = 0;
   float ratio_b_ = 1;
   float detection_a_s_ = 0;
   float detection_b_s_ = 0;
   float release_s_ = 0;
-  float follower_settled_s_ = 0;
-  float manual_stop_yaw_ = 0;
-  unsigned protected_follower_ = 0;
-  float takeover_still_s_ = 0;
-  bool takeover_armed_ = false;
   bool manual_ready_a_ = false;
   bool manual_ready_b_ = false;
   unsigned manual_source_ = 0;

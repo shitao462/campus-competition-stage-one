@@ -25,16 +25,15 @@ constexpr float MANUAL_SPEED_RADPS = 0.08f;
 constexpr float BOARD_STILL_RADPS = 0.05f;
 constexpr float MANUAL_DETECTION_S = 0.04f;
 constexpr float MANUAL_RELEASE_S = 0.3f;
-constexpr float MANUAL_FOLLOWER_SETTLE_S = 0.2f;
-constexpr float MANUAL_FOLLOWER_CURRENT_A = 0.01f;
-constexpr float MANUAL_TAKEOVER_STILL_S = 0.15f;
 // After a confirmed rest, identify a fresh hand movement before the position loop fights it.
 constexpr float MANUAL_TAKEOVER_ERROR_RAD = 0.006f;
 constexpr float MANUAL_TAKEOVER_SPEED_RADPS = 0.06f;
-// Conservative reference-envelope tuning, not a measured motor deceleration guarantee.
-constexpr float B_LANDING_DECELERATION_RADPS2 = 0.8f;
-// Keep the angular ratio at 3; soften B's speed and acceleration limits by 20%.
-constexpr float B_RATIO_THREE_MOTION_SCALE = 2.4f;
+// Dedicated, gentler B loops for MID 1:3; the angular target still has ratio 3.
+constexpr float B_RATIO_THREE_POSITION_KP = 2.2f;
+constexpr float B_RATIO_THREE_SPEED_KI = 0.1f;
+constexpr float B_RATIO_THREE_INTEGRAL_LIMIT_A = 0.03f;
+constexpr float B_RATIO_THREE_MOTION_SCALE = 1.5f;
+constexpr float B_RATIO_THREE_ACCELERATION_RADPS2 = 2.5f;
 
 bool moving_away(
   float angle, float target, float speed, float error_gate = MANUAL_ERROR_RAD,
@@ -64,8 +63,12 @@ namespace app
 LinkageController::LinkageController()
 : position_a_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, SPEED_LIMIT_RADPS, 0),
   position_b_(LINKAGE_PERIOD_S, POSITION_KP, 0, 0, 3.0f * SPEED_LIMIT_RADPS, 0),
+  position_b_three_(LINKAGE_PERIOD_S, B_RATIO_THREE_POSITION_KP, 0, 0, 3.0f * SPEED_LIMIT_RADPS, 0),
   speed_a_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
   speed_b_(LINKAGE_PERIOD_S, SPEED_KP, SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, INTEGRAL_LIMIT_A),
+  speed_b_three_(
+    LINKAGE_PERIOD_S, SPEED_KP, B_RATIO_THREE_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A,
+    B_RATIO_THREE_INTEGRAL_LIMIT_A),
   reset_speed_a_(
     LINKAGE_PERIOD_S, SPEED_KP, RESET_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A),
   reset_speed_b_(
@@ -79,16 +82,14 @@ void LinkageController::reset()
   reset_active_ = false;
   reset_settled_s_ = 0;
   manual_source_ = 0;
-  protected_follower_ = 0;
-  takeover_still_s_ = 0;
-  takeover_armed_ = false;
-  manual_stop_yaw_ = 0;
   manual_ready_a_ = manual_ready_b_ = false;
-  detection_a_s_ = detection_b_s_ = release_s_ = follower_settled_s_ = 0;
+  detection_a_s_ = detection_b_s_ = release_s_ = 0;
   position_a_.clear();
   position_b_.clear();
+  position_b_three_.clear();
   speed_a_.clear();
   speed_b_.clear();
+  speed_b_three_.clear();
   reset_speed_a_.clear();
   reset_speed_b_.clear();
   state_a_ = {};
@@ -98,7 +99,7 @@ void LinkageController::reset()
 float LinkageController::calculate_current(
   sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
   float measured_speed, float motion_scale, bool circular_target, bool stabilize_arrival,
-  bool brake_on_crossing, bool soft_landing)
+  bool brake_on_crossing, bool stop_feedforward, bool target_stopped, float acceleration_limit)
 {
   state.filtered_speed += SPEED_FILTER_ALPHA * (measured_speed - state.filtered_speed);
   // Differentiate the final target so board and hand inputs share the same smoothing.
@@ -110,35 +111,29 @@ float LinkageController::calculate_current(
   state.target_initialized = true;
   const float raw_target_speed = sp::limit_max(target_step / LINKAGE_PERIOD_S, 6.0f);
   state.target_speed += TARGET_SPEED_FILTER_ALPHA * (raw_target_speed - state.target_speed);
+  // Integer-RPM feedback can read zero during slow hand input. Confirm that the
+  // final target has also stopped rather than repeatedly removing moving-goal feedforward.
+  const bool target_still = target_stopped && std::abs(target_step) < 0.00001f;
+  state.target_still_s = target_still ? state.target_still_s + LINKAGE_PERIOD_S : 0;
+  if (stop_feedforward && state.target_still_s >= 0.1f) state.target_speed = 0;
   position.calc(target, angle);
   const float error = target - angle;
-  // B must not carry the previous approach torque through the target and drive an overshoot.
-  if ((stabilize_arrival || brake_on_crossing) && error * state.previous_error < 0) {
+  // Discard old integral and catch-up speed when an axis crosses its goal.
+  if (
+    (stabilize_arrival || brake_on_crossing || stop_feedforward) &&
+    error * state.previous_error < 0) {
     speed.clear();
     // A hand-input follower must not keep the approach speed after passing its goal.
     // Actual output remains subject to the current slew limit.
-    if (brake_on_crossing) state.speed_reference = 0;
+    if (brake_on_crossing || stop_feedforward)
+      state.speed_reference = stop_feedforward ? state.target_speed : 0;
   }
   state.previous_error = error;
   const float speed_limit = SPEED_LIMIT_RADPS * motion_scale;
   const float position_speed = sp::limit_max(position.out, speed_limit);
   const float requested_speed = sp::limit_max(position_speed + state.target_speed, speed_limit);
-  state.speed_reference = approach(
-    state.speed_reference, requested_speed,
-    MOTOR_ACCELERATION_RADPS2 * motion_scale * LINKAGE_PERIOD_S);
-  if (soft_landing) {
-    // Bound closing velocity by remaining distance, relative to the moving goal.
-    // Keep feedforward for continuous 1:3 tracking; tighten only the catch-up component.
-    const float closing_limit = std::sqrt(2 * B_LANDING_DECELERATION_RADPS2 * std::abs(error));
-    state.speed_reference = sp::limit_max(
-      state.target_speed + sp::limit_max(state.speed_reference - state.target_speed, closing_limit),
-      speed_limit);
-    const float closing_speed = state.filtered_speed - state.target_speed;
-    if (closing_speed * error > 0 && std::abs(closing_speed) > closing_limit) {
-      // Old positive approach integral must not counteract a needed braking command.
-      speed.clear();
-    }
-  }
+  state.speed_reference =
+    approach(state.speed_reference, requested_speed, acceleration_limit * LINKAGE_PERIOD_S);
   const bool settled_candidate = std::abs(target - angle) < SETTLED_ERROR_RAD &&
                                  std::abs(measured_speed) < SETTLED_SPEED_RADPS &&
                                  std::abs(state.target_speed) < SETTLED_TARGET_SPEED_RADPS &&
@@ -161,7 +156,10 @@ float LinkageController::calculate_current(
   }
   else {
     // Freeze integration while the actuator cannot follow the requested current.
-    const float integral_threshold = state.integral_paused ? 0 : MOTOR_CURRENT_LIMIT_A * 0.8f;
+    const bool accelerating_reference =
+      std::abs(state.speed_reference - requested_speed) > 0.00001f;
+    const float integral_threshold =
+      (state.integral_paused || accelerating_reference) ? 0 : MOTOR_CURRENT_LIMIT_A * 0.8f;
     speed.calc(state.speed_reference, state.filtered_speed, integral_threshold);
   }
   const float requested_current = speed.out;
@@ -193,9 +191,21 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
       state_a_.filtered_speed = input.speed_a;
       state_b_.filtered_speed = input.speed_b;
     }
-    // UP aligns physical directions regardless of the MID multi-turn position history.
+    // UP tracks only the calibrated board direction, independent of MID ratio and hand history.
+    // Encoder displacement is feedback: pushing either motor cannot redefine its target.
     const float target_a = input.angle_a + wrap_direction(input.reset_direction_a - input.angle_a);
     const float target_b = input.angle_b + wrap_direction(input.reset_direction_b - input.angle_b);
+    if (input.control_paused) {
+      reset_speed_a_.clear();
+      reset_speed_b_.clear();
+      speed_b_three_.clear();
+      state_a_ = {};
+      state_b_ = {};
+      state_a_.filtered_speed = input.speed_a;
+      state_b_.filtered_speed = input.speed_b;
+      reset_settled_s_ = 0;
+      return {true, target_a, target_b, 0, 0, input.yaw, 0, false};
+    }
     const float current_a = calculate_current(
       position_a_, reset_speed_a_, state_a_, target_a, input.angle_a, input.speed_a, 1.0f, true);
     const float current_b = calculate_current(
@@ -215,6 +225,7 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     origin_a_ = input.angle_a;
     origin_b_ = input.angle_b;
     yaw_origin_ = input.yaw;
+    board_detection_yaw_ = input.yaw;
     offset_ = 0;
     ratio_b_ = input.ratio_b;
     state_a_.filtered_speed = input.speed_a;
@@ -224,43 +235,18 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
   float target_a = origin_a_ + reference;
   float target_b = origin_b_ + ratio_b_ * reference;
 
-  // Turning the board after releasing the hand resumes board control immediately.
-  // Keep the unfinished follower excluded from hand detection while it catches up.
-  if (
-    manual_source_ != 0 && release_s_ >= MANUAL_RELEASE_S &&
-    std::abs(input.yaw - manual_stop_yaw_) > 0.005f) {
+  const bool board_moved = std::abs(input.yaw - board_detection_yaw_) > 0.005f;
+  if (board_moved) board_detection_yaw_ = input.yaw;
+  // Require actual board rotation as well as displacement. Stationary yaw drift must
+  // not repeatedly cancel a hand source and clear the follower's speed integral.
+  if (manual_source_ != 0 && board_moved && std::abs(input.yaw_rate) >= BOARD_STILL_RADPS) {
     manual_source_ = 0;
-    detection_a_s_ = detection_b_s_ = release_s_ = follower_settled_s_ = 0;
+    detection_a_s_ = detection_b_s_ = release_s_ = 0;
     speed_a_.clear();
     speed_b_.clear();
+    speed_b_three_.clear();
   }
-
   const bool board_still = std::abs(input.yaw_rate) < BOARD_STILL_RADPS;
-  if (
-    protected_follower_ != 0 && board_still &&
-    (manual_source_ == 0 || release_s_ >= MANUAL_RELEASE_S)) {
-    const bool follower_a = protected_follower_ == 1;
-    const float follower_speed = follower_a ? input.speed_a : input.speed_b;
-    const float follower_target_speed = follower_a ? state_a_.target_speed : state_b_.target_speed;
-    const float follower_error = follower_a ? target_a - input.angle_a : target_b - input.angle_b;
-    if (
-      std::abs(follower_speed) < SETTLED_SPEED_RADPS &&
-      std::abs(follower_target_speed) < SETTLED_TARGET_SPEED_RADPS) {
-      takeover_still_s_ += LINKAGE_PERIOD_S;
-      if (takeover_still_s_ >= MANUAL_TAKEOVER_STILL_S) takeover_armed_ = true;
-    }
-    else {
-      takeover_still_s_ = 0;
-      // A resumed correction outside the arrival band consumes the rest qualification.
-      // A small fresh movement near the goal must reach the hand gate before losing it.
-      if (std::abs(follower_error) >= SETTLED_ERROR_RAD && follower_error * follower_speed > 0)
-        takeover_armed_ = false;
-    }
-  }
-  else {
-    takeover_still_s_ = 0;
-    takeover_armed_ = false;
-  }
 
   if (manual_source_ == 0 && board_still) {
     // Retain rest qualification while a fresh movement builds the small displacement gate.
@@ -268,12 +254,12 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     if (state_a_.settled_s >= SETTLED_DWELL_S) manual_ready_a_ = true;
     if (state_b_.settled_s >= SETTLED_DWELL_S) manual_ready_b_ = true;
     if (
-      protected_follower_ == 1 || std::abs(state_a_.target_speed) >= SETTLED_TARGET_SPEED_RADPS ||
+      std::abs(state_a_.target_speed) >= SETTLED_TARGET_SPEED_RADPS ||
       (std::abs(target_a - input.angle_a) >= SETTLED_ERROR_RAD &&
        (target_a - input.angle_a) * input.speed_a > 0))
       manual_ready_a_ = false;
     if (
-      protected_follower_ == 2 || std::abs(state_b_.target_speed) >= SETTLED_TARGET_SPEED_RADPS ||
+      std::abs(state_b_.target_speed) >= SETTLED_TARGET_SPEED_RADPS ||
       (std::abs(target_b - input.angle_b) >= SETTLED_ERROR_RAD &&
        (target_b - input.angle_b) * input.speed_b > 0))
       manual_ready_b_ = false;
@@ -281,34 +267,33 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
   else {
     manual_ready_a_ = manual_ready_b_ = false;
   }
-  if ((manual_source_ == 0 || takeover_armed_) && board_still) {
-    const bool rested_a = takeover_armed_ || manual_ready_a_;
-    const bool rested_b = takeover_armed_ || manual_ready_b_;
-    detection_a_s_ = manual_source_ != 1 && (protected_follower_ != 1 || takeover_armed_) &&
-                         moving_away(
-                           input.angle_a, target_a, input.speed_a,
-                           rested_a ? MANUAL_TAKEOVER_ERROR_RAD : MANUAL_ERROR_RAD,
-                           rested_a ? MANUAL_TAKEOVER_SPEED_RADPS : MANUAL_SPEED_RADPS)
-                       ? detection_a_s_ + LINKAGE_PERIOD_S
-                       : 0;
-    detection_b_s_ = manual_source_ != 2 && (protected_follower_ != 2 || takeover_armed_) &&
-                         moving_away(
-                           input.angle_b, target_b, input.speed_b,
-                           rested_b ? MANUAL_TAKEOVER_ERROR_RAD : MANUAL_ERROR_RAD,
-                           rested_b ? MANUAL_TAKEOVER_SPEED_RADPS : MANUAL_SPEED_RADPS)
-                       ? detection_b_s_ + LINKAGE_PERIOD_S
-                       : 0;
+  if (
+    (manual_source_ == 0 || release_s_ >= MANUAL_RELEASE_S) && board_still &&
+    !input.control_paused) {
+    const bool rested_a = manual_ready_a_;
+    const bool rested_b = manual_ready_b_;
+    detection_a_s_ =
+      manual_source_ != 1 && moving_away(
+                               input.angle_a, target_a, input.speed_a,
+                               rested_a ? MANUAL_TAKEOVER_ERROR_RAD : MANUAL_ERROR_RAD,
+                               rested_a ? MANUAL_TAKEOVER_SPEED_RADPS : MANUAL_SPEED_RADPS)
+        ? detection_a_s_ + LINKAGE_PERIOD_S
+        : 0;
+    detection_b_s_ =
+      manual_source_ != 2 && moving_away(
+                               input.angle_b, target_b, input.speed_b,
+                               rested_b ? MANUAL_TAKEOVER_ERROR_RAD : MANUAL_ERROR_RAD,
+                               rested_b ? MANUAL_TAKEOVER_SPEED_RADPS : MANUAL_SPEED_RADPS)
+        ? detection_b_s_ + LINKAGE_PERIOD_S
+        : 0;
     if (detection_a_s_ >= MANUAL_DETECTION_S || detection_b_s_ >= MANUAL_DETECTION_S) {
       manual_source_ = detection_a_s_ >= MANUAL_DETECTION_S ? 1 : 2;
-      protected_follower_ = 3 - manual_source_;
-      takeover_still_s_ = 0;
-      takeover_armed_ = false;
       manual_ready_a_ = manual_ready_b_ = false;
       release_s_ = 0;
-      follower_settled_s_ = 0;
       detection_a_s_ = detection_b_s_ = 0;
       speed_a_.clear();
       speed_b_.clear();
+      speed_b_three_.clear();
     }
   }
   else {
@@ -323,17 +308,40 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     target_a = origin_a_ + reference;
     target_b = origin_b_ + ratio_b_ * reference;
     const float source_speed = manual_source_ == 1 ? input.speed_a : input.speed_b;
-    if (release_s_ == 0) manual_stop_yaw_ = input.yaw;
     release_s_ = std::abs(source_speed) < MANUAL_SPEED_RADPS ? release_s_ + LINKAGE_PERIOD_S : 0;
   }
 
+  if (input.control_paused) {
+    // Release torque on a late tick without capturing new origins on recovery.
+    position_a_.clear();
+    position_b_.clear();
+    position_b_three_.clear();
+    speed_a_.clear();
+    speed_b_.clear();
+    speed_b_three_.clear();
+    state_a_ = {};
+    state_b_ = {};
+    state_a_.filtered_speed = input.speed_a;
+    state_b_.filtered_speed = input.speed_b;
+    detection_a_s_ = detection_b_s_ = 0;
+    manual_ready_a_ = manual_ready_b_ = false;
+    return {true, target_a, target_b, 0, 0, yaw_origin_ - offset_, manual_source_};
+  }
+  const bool stop_feedforward = ratio_b_ == 3.0f;
+  const float source_rate = manual_source_ == 1   ? input.speed_a
+                            : manual_source_ == 2 ? input.speed_b / ratio_b_
+                                                  : input.yaw_rate;
+  const bool target_stopped = std::abs(source_rate) < 0.01f;
   float current_a = calculate_current(
     position_a_, speed_a_, state_a_, target_a, input.angle_a, input.speed_a, 1.0f, false, false,
-    protected_follower_ == 1);
+    manual_source_ == 2 || ratio_b_ == 3.0f, stop_feedforward, target_stopped);
   const float motion_scale_b = ratio_b_ == 3.0f ? B_RATIO_THREE_MOTION_SCALE : 1.0f;
   float current_b = calculate_current(
-    position_b_, speed_b_, state_b_, target_b, input.angle_b, input.speed_b, motion_scale_b, false,
-    false, protected_follower_ == 2, ratio_b_ == 3.0f);
+    ratio_b_ == 3.0f ? position_b_three_ : position_b_,
+    ratio_b_ == 3.0f ? speed_b_three_ : speed_b_, state_b_, target_b, input.angle_b, input.speed_b,
+    motion_scale_b, false, false, manual_source_ == 1 || ratio_b_ == 3.0f, stop_feedforward,
+    target_stopped,
+    ratio_b_ == 3.0f ? B_RATIO_THREE_ACCELERATION_RADPS2 : MOTOR_ACCELERATION_RADPS2);
   // Release a hand candidate during confirmation rather than resisting for another 40 ms.
   // Targets are retained until confirmation; cancellation restarts the servo from zero current.
   if (manual_source_ == 1 || detection_a_s_ > 0) {
@@ -343,34 +351,14 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
   }
   if (manual_source_ == 2 || detection_b_s_ > 0) {
     speed_b_.clear();
+    speed_b_three_.clear();
     state_b_ = {0, 0, input.speed_b, false};
     current_b = 0;
   }
-  if (protected_follower_ != 0) {
-    const bool source_a = protected_follower_ == 2;
-    const float follower_error = source_a ? target_b - input.angle_b : target_a - input.angle_a;
-    const float follower_speed = source_a ? input.speed_b : input.speed_a;
-    const float follower_current = source_a ? current_b : current_a;
-    const LoopState & follower_state = source_a ? state_b_ : state_a_;
-    const bool follower_settled =
-      std::abs(follower_error) < SETTLED_ERROR_RAD &&
-      std::abs(follower_speed) < SETTLED_SPEED_RADPS &&
-      std::abs(follower_current) < MANUAL_FOLLOWER_CURRENT_A &&
-      std::abs(follower_state.target_speed) < SETTLED_TARGET_SPEED_RADPS;
-    follower_settled_s_ = follower_settled ? follower_settled_s_ + LINKAGE_PERIOD_S : 0;
-    // Keep the original source unpowered through continuous follower motion.
-    // Regular release waits for settling; a new motion after rest can take over above.
-    if (
-      (manual_source_ == 0 || release_s_ >= MANUAL_RELEASE_S) &&
-      follower_settled_s_ >= MANUAL_FOLLOWER_SETTLE_S) {
-      manual_source_ = 0;
-      protected_follower_ = 0;
-      takeover_still_s_ = 0;
-      takeover_armed_ = false;
-      detection_a_s_ = detection_b_s_ = release_s_ = follower_settled_s_ = 0;
-      speed_a_.clear();
-      speed_b_.clear();
-    }
+  // Releasing the hand restores input detection without waiting for the follower to catch up.
+  if (manual_source_ != 0 && release_s_ >= MANUAL_RELEASE_S) {
+    manual_source_ = 0;
+    release_s_ = 0;
   }
   return {true, target_a, target_b, current_a, current_b, yaw_origin_ - offset_, manual_source_};
 }

@@ -218,12 +218,12 @@ extern "C" int run_tests()
   }
   {
     app::LinkageController controller;
-    // Continuous tracking below the reduced B 2.4 rad/s limit must still drive forward.
-    app::LinkageInput input = {true, 0, 0.7f, 0, 0, 0.7f, 2.1f, 3};
+    // Continuous tracking below the reduced B 1.2 rad/s limit must still drive forward.
+    app::LinkageInput input = {true, 0, 0.3f, 0, 0, 0.3f, 0.9f, 3};
     app::LinkageOutput output = controller.update(input);
     float previous_b = output.current_b;
     for (unsigned step = 0; step < 400; ++step) {
-      input.yaw += 0.0035f;
+      input.yaw += 0.0015f;
       input.angle_a = input.yaw;
       input.angle_b = 3 * input.yaw - 0.1f;
       output = controller.update(input);
@@ -305,142 +305,62 @@ extern "C" int run_tests()
     if (output.current_b >= 0) return 48;
   }
   for (float ratio : {0.5f, -1.0f, 3.0f}) {
-    for (unsigned source : {1u, 2u}) {
-      app::LinkageController controller;
-      app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
-      controller.update(input);
-      app::LinkageOutput output;
-      for (unsigned step = 0; step < 50; ++step) {
-        if (source == 1) {
-          input.angle_a += 0.005f;
-          input.speed_a = 1;
-        }
-        else {
-          input.angle_b += 0.005f;
-          input.speed_b = 1;
-        }
-        output = controller.update(input);
-      }
-      const float retained_a = output.target_a;
-      const float retained_b = output.target_b;
-      input.speed_a = input.speed_b = 0;
-      // The follower continues away from its goal after the operator stops the source.
-      for (unsigned step = 0; step < 120; ++step) {
-        if (source == 1) {
-          input.angle_b = retained_b + 0.1f + step * 0.001f;
-          input.speed_b = 0.2f;
-        }
-        else {
-          input.angle_a = retained_a + 0.1f + step * 0.001f;
-          input.speed_a = 0.2f;
-        }
-        output = controller.update(input);
-        if (output.manual_source != source) return 49;
-        if (!near(output.target_a, retained_a) || !near(output.target_b, retained_b)) return 50;
-        if ((source == 1 ? output.current_a : output.current_b) != 0) return 51;
-      }
-      // Only a settled follower permits a new hand-input source to take over.
-      input.angle_a = retained_a;
-      input.angle_b = retained_b;
-      input.speed_a = input.speed_b = 0;
-      for (unsigned step = 0; step < 200; ++step) output = controller.update(input);
-      if (output.manual_source != 0) return 52;
-      for (unsigned step = 0; step < 50; ++step) {
-        if (source == 1) {
-          input.angle_b += 0.005f;
-          input.speed_b = 1;
-        }
-        else {
-          input.angle_a += 0.005f;
-          input.speed_a = 1;
-        }
-        output = controller.update(input);
-      }
-      if (output.manual_source != 3 - source) return 53;
-    }
-  }
-  {
     app::LinkageController controller;
-    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
-    controller.update(input);
-    app::LinkageOutput output;
+    const float alignment_a = app::mapped_reset_direction(0, app::MOTOR_A_R_ALIGNMENT_ENCODER, 1);
+    const float alignment_b = app::mapped_reset_direction(0, app::MOTOR_B_R_ALIGNMENT_ENCODER, 1);
+    app::LinkageInput input = {true, 0,     0,    alignment_a, alignment_b, 0,
+                               0,    ratio, true, alignment_a, alignment_b};
+    auto output = controller.update(input);
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    if (
+      !output.reset_complete || !near(output.target_a, alignment_a) ||
+      !near(output.target_b, alignment_b))
+      return 77;
+    // Force both shafts away. Their measured positions must never become command inputs.
+    input.angle_a += 0.1f;
+    input.angle_b -= 0.1f;
+    input.speed_a = 0.2f;
+    input.speed_b = -0.2f;
     for (unsigned step = 0; step < 50; ++step) {
-      input.angle_a += 0.005f;
-      input.speed_a = 1;
-      output = controller.update(input);
-    }
-    const float retained_a = output.target_a;
-    const float retained_b = output.target_b;
-    input.speed_a = 0;
-    input.angle_b = retained_b + 0.2f;
-    input.speed_b = 0.2f;
-    for (unsigned step = 0; step < 80; ++step) output = controller.update(input);
-    // Board motion must work even while B is still recovering from a hand-input overshoot.
-    input.yaw = 0.1f;
-    input.yaw_rate = 0.5f;
-    output = controller.update(input);
-    if (output.manual_source != 0 || !near(output.target_a, retained_a + 0.1f)) return 54;
-    if (!near(output.target_b, retained_b + 0.3f)) return 55;
-    input.yaw_rate = 0;
-    input.angle_b = output.target_b + 0.2f;
-    for (unsigned step = 0; step < 50; ++step) {
-      input.angle_b += 0.001f;
-      output = controller.update(input);
-      if (output.manual_source != 0 || !near(output.target_a, retained_a + 0.1f)) return 56;
-    }
-    input.enabled = false;
-    output = controller.update(input);
-    if (output.enabled || output.current_a != 0 || output.current_b != 0) return 57;
-  }
-  for (float ratio : {0.5f, -1.0f, 3.0f}) {
-    app::LinkageController controller;
-    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
-    controller.update(input);
-    app::LinkageOutput output;
-    for (unsigned step = 0; step < 50; ++step) {
-      input.angle_a += 0.005f;
-      input.speed_a = 1;
-      output = controller.update(input);
-    }
-    input.speed_a = 0;
-    const float goal = output.target_b;
-    // Build a negative approach command while B is far above a fixed destination.
-    input.angle_b = goal + 1;
-    for (unsigned step = 0; step < 180; ++step) output = controller.update(input);
-    input.angle_b = goal - 0.05f;
-    for (unsigned step = 0; step < 80; ++step) output = controller.update(input);
-    if (output.manual_source != 1 || output.current_a != 0 || output.current_b <= 0) return 58;
-    if (!near(output.target_b, goal)) return 59;
-  }
-  {
-    app::LinkageController controller;
-    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
-    controller.update(input);
-    app::LinkageOutput output;
-    for (unsigned step = 0; step < 50; ++step) {
-      input.angle_a += 0.005f;
-      input.speed_a = 1;
-      output = controller.update(input);
-    }
-    input.speed_a = 0;
-    const float goal = output.target_b;
-    input.angle_b = goal - 2;
-    for (unsigned step = 0; step < 180; ++step) output = controller.update(input);
-    // B is still approaching, only 1.15 degrees short, at 1 rad/s. Brake before crossing.
-    input.angle_b = goal - 0.02f;
-    input.speed_b = 1;
-    float previous_current = output.current_b;
-    for (unsigned step = 0; step < 70; ++step) {
       output = controller.update(input);
       if (
-        std::abs(output.current_b - previous_current) >
-        app::MOTOR_CURRENT_SLEW_A_PER_S * app::LINKAGE_PERIOD_S + 0.00001f)
-        return 60;
-      if (std::abs(output.current_b) > app::MOTOR_CURRENT_LIMIT_A + 0.00001f) return 61;
-      previous_current = output.current_b;
+        output.manual_source != 0 || output.reset_complete || !near(output.target_a, alignment_a) ||
+        !near(output.target_b, alignment_b))
+        return 78;
     }
-    if (output.current_b >= 0 || output.manual_source != 1 || output.current_a != 0) return 62;
-    if (!near(output.target_b, goal)) return 63;
+    if (output.current_a >= 0 || output.current_b <= 0) return 79;
+    // Both targets follow C by the same positive/negative angle in every ratio.
+    for (float direction : {1.0f, -1.0f}) {
+      input.yaw = direction * sp::SP_PI / 2;
+      input.yaw_rate = direction * 0.5f;
+      input.reset_direction_a = alignment_a + input.yaw;
+      input.reset_direction_b = alignment_b + input.yaw;
+      output = controller.update(input);
+      if (
+        !near(output.target_a, alignment_a + input.yaw) ||
+        !near(output.target_b, alignment_b + input.yaw) || output.manual_source != 0)
+        return 80;
+    }
+  }
+  {
+    // Recover the supplied correct pose without replacing the existing startup yaw.
+    const float yaw = 28.28f * sp::SP_PI / 180;
+    const float count_to_rad = 2 * sp::SP_PI / 8192;
+    const float target_a = app::mapped_reset_direction(yaw, app::MOTOR_A_R_ALIGNMENT_ENCODER, 1);
+    const float target_b = app::mapped_reset_direction(yaw, app::MOTOR_B_R_ALIGNMENT_ENCODER, 1);
+    if (
+      std::abs(target_a - 5294 * count_to_rad) > 0.5f * count_to_rad ||
+      std::abs(target_b - 4370 * count_to_rad) > 0.5f * count_to_rad)
+      return 81;
+    app::LinkageController controller;
+    app::LinkageInput input = {
+      true, yaw, 0, 5294 * count_to_rad, 4370 * count_to_rad, 0, 0, 3, true, target_a, target_b};
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    if (
+      !output.reset_complete || output.manual_source != 0 || output.current_a != 0 ||
+      output.current_b != 0)
+      return 82;
   }
   for (float ratio : {0.5f, -1.0f, 3.0f}) {
     for (unsigned source : {1u, 2u}) {
@@ -448,158 +368,91 @@ extern "C" int run_tests()
       app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
       controller.update(input);
       app::LinkageOutput output;
-      for (unsigned step = 0; step < 50; ++step) {
+      // More than four turns with a follower that never catches up.
+      for (unsigned step = 0; step < 600; ++step) {
         if (source == 1) {
-          input.angle_a += 0.005f;
-          input.speed_a = 1;
+          input.angle_a += 0.05f;
+          input.speed_a = 10;
         }
         else {
-          input.angle_b += 0.005f;
-          input.speed_b = 1;
+          input.angle_b += 0.05f;
+          input.speed_b = 10;
         }
         output = controller.update(input);
+        if (
+          step > 10 && (output.manual_source != source ||
+                        (source == 1 ? output.current_a : output.current_b) != 0))
+          return 83;
+        if (step > 10 && !near(output.target_b, ratio * output.target_a)) return 84;
       }
       input.speed_a = input.speed_b = 0;
-      // The follower can be stationary short of its goal because of friction or a hand hold.
-      if (source == 1)
-        input.angle_b = output.target_b + 0.04f;
-      else
-        input.angle_a = output.target_a + 0.04f;
-      for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
-      for (unsigned step = 0; step < 50; ++step) {
-        if (source == 1) {
-          input.angle_b += 0.005f;
-          input.speed_b = 1;
+      for (unsigned step = 0; step < 70; ++step) output = controller.update(input);
+      // Swap while the previous follower is still far from its goal: no settling gate.
+      const unsigned next = 3 - source;
+      const float hand_direction = next == 1 ? (input.angle_a >= output.target_a ? 1.0f : -1.0f)
+                                             : (input.angle_b >= output.target_b ? 1.0f : -1.0f);
+      for (unsigned step = 0; step < 20; ++step) {
+        if (next == 1) {
+          input.angle_a += hand_direction * 0.005f;
+          input.speed_a = hand_direction;
         }
         else {
-          input.angle_a += 0.005f;
-          input.speed_a = 1;
+          input.angle_b += hand_direction * 0.005f;
+          input.speed_b = hand_direction;
         }
         output = controller.update(input);
       }
-      if (output.manual_source != 3 - source) return 64;
-      if ((source == 1 ? output.current_b : output.current_a) != 0) return 65;
-      if (!near(output.target_b, ratio * output.target_a)) return 66;
+      if (output.manual_source != next || (next == 1 ? output.current_a : output.current_b) != 0)
+        return 85;
     }
+  }
+  for (float direction : {1.0f, -1.0f}) {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
+    controller.update(input);
+    app::LinkageOutput output;
+    // A low/quantized source speed must not cancel feedforward while its target keeps moving.
+    for (unsigned step = 0; step < 300; ++step) {
+      input.yaw += direction * 0.00006f;
+      input.yaw_rate = direction * 0.008f;
+      input.angle_a = input.yaw - direction * 0.004f;
+      input.angle_b = 3 * input.yaw - direction * 0.004f;
+      input.speed_a = direction * 0.012f;
+      input.speed_b = direction * 0.036f;
+      output = controller.update(input);
+      if (step > 200 && output.current_b * direction <= 0.0001f) return 86;
+      if (output.manual_source != 0 || !near(output.target_b, 3 * input.yaw)) return 87;
+    }
+    input.angle_a = output.target_a;
+    input.angle_b = output.target_b;
+    input.yaw_rate = input.speed_a = input.speed_b = 0;
+    for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
+    if (output.current_b != 0) return 88;
   }
   {
     app::LinkageController controller;
     app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
     controller.update(input);
     app::LinkageOutput output;
-    for (unsigned step = 0; step < 50; ++step) {
-      input.angle_a += 0.005f;
-      input.speed_a = 1;
+    // Stationary-board yaw drift crosses the old 0.005-rad displacement gate repeatedly.
+    for (unsigned step = 0; step < 1200; ++step) {
+      input.yaw += 0.00001f;
+      input.yaw_rate = 0.002f;
+      input.angle_a += 0.003f;
+      input.speed_a = 0.6f;
+      input.angle_b = 3 * input.angle_a - 0.1f;
+      input.speed_b = 1.2f;
       output = controller.update(input);
+      if (
+        step > 20 && (output.manual_source != 1 || output.current_a != 0 ||
+                      !near(output.target_b, 3 * input.angle_a)))
+        return 89;
     }
-    const float goal = output.target_b;
-    input.angle_b = goal + 0.04f;
-    input.speed_a = input.speed_b = 0;
-    for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
-    // A servo movement toward the goal consumes the rest-based handover opportunity.
-    input.speed_b = -0.2f;
-    for (unsigned step = 0; step < 20; ++step) {
-      input.angle_b -= 0.001f;
-      output = controller.update(input);
-    }
-    // Its subsequent uninterrupted overshoot must not become a new B hand input.
-    for (unsigned step = 0; step < 100; ++step) {
-      input.angle_b -= 0.001f;
-      output = controller.update(input);
-      if (output.manual_source != 1 || output.current_a != 0 || !near(output.target_b, goal))
-        return 67;
-    }
-  }
-  for (float ratio : {0.5f, -1.0f, 3.0f}) {
-    for (unsigned first_source : {1u, 2u}) {
-      app::LinkageController controller;
-      app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, ratio};
-      controller.update(input);
-      app::LinkageOutput output;
-      for (unsigned step = 0; step < 50; ++step) {
-        if (first_source == 1) {
-          input.angle_a += 0.005f;
-          input.speed_a = 1;
-        }
-        else {
-          input.angle_b += 0.005f;
-          input.speed_b = 1;
-        }
-        output = controller.update(input);
-      }
-      // Alternate inputs after settling, with a slow displacement below the old 1.43-deg gate.
-      unsigned next_source = 3 - first_source;
-      for (unsigned round = 0; round < 4; ++round) {
-        input.angle_a = output.target_a;
-        input.angle_b = output.target_b;
-        input.speed_a = input.speed_b = 0;
-        for (unsigned step = 0; step < 200; ++step) output = controller.update(input);
-        if (output.manual_source != 0) return 68;
-        const float direction = round % 2 ? -1.0f : 1.0f;
-        for (unsigned step = 0; step < 20; ++step) {
-          if (next_source == 1) {
-            input.angle_a += direction * 0.0006f;
-            input.speed_a = direction * 0.12f;
-          }
-          else {
-            input.angle_b += direction * 0.0006f;
-            input.speed_b = direction * 0.12f;
-          }
-          output = controller.update(input);
-          // The candidate must yield during qualification, before the source is confirmed.
-          if (step >= 12 && (next_source == 1 ? output.current_a : output.current_b) != 0)
-            return 69;
-        }
-        if (output.manual_source != next_source) return 70;
-        if (!near(output.target_b, ratio * output.target_a)) return 71;
-        next_source = 3 - next_source;
-      }
-    }
-  }
-  for (unsigned first_source : {1u, 2u}) {
-    app::LinkageController controller;
-    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3};
-    controller.update(input);
-    app::LinkageOutput output;
-    for (unsigned step = 0; step < 50; ++step) {
-      if (first_source == 1) {
-        input.angle_a += 0.005f;
-        input.speed_a = 1;
-      }
-      else {
-        input.angle_b += 0.005f;
-        input.speed_b = 1;
-      }
-      output = controller.update(input);
-    }
-    input.speed_a = input.speed_b = 0;
-    if (first_source == 1)
-      input.angle_b = output.target_b + 0.04f;
-    else
-      input.angle_a = output.target_a + 0.04f;
-    for (unsigned step = 0; step < 160; ++step) output = controller.update(input);
-    const float retained_a = output.target_a;
-    const float retained_b = output.target_b;
-    // A short new motion against the old holding torque must yield before 40-ms confirmation.
-    for (unsigned step = 0; step < 4; ++step) {
-      if (first_source == 1) {
-        input.angle_b += 0.0006f;
-        input.speed_b = 0.12f;
-      }
-      else {
-        input.angle_a += 0.0006f;
-        input.speed_a = 0.12f;
-      }
-      output = controller.update(input);
-      if (output.manual_source != first_source) return 72;
-      if (output.current_a != 0 || output.current_b != 0) return 73;
-    }
-    // Cancel a brief candidate; keep the linkage reference and restart from zero current.
-    input.speed_a = input.speed_b = 0;
+    // Deliberate board rotation must still take control from the hand source.
+    input.yaw += 0.1f;
+    input.yaw_rate = 0.5f;
     output = controller.update(input);
-    if (output.manual_source != first_source) return 74;
-    if (!near(output.target_a, retained_a) || !near(output.target_b, retained_b)) return 75;
-    if (std::abs(output.current_a) > 0.00401f || std::abs(output.current_b) > 0.00401f) return 76;
+    if (output.manual_source != 0) return 90;
   }
   return 0;
 }
