@@ -6,7 +6,7 @@
 namespace app
 {
 constexpr float LINKAGE_PERIOD_S = 0.005f;
-constexpr float MOTOR_CURRENT_LIMIT_A = 0.27f;
+constexpr float MOTOR_CURRENT_LIMIT_A = 0.25f;
 constexpr float MOTOR_CURRENT_SLEW_A_PER_S = 0.8f;
 constexpr float MOTOR_ACCELERATION_RADPS2 = 1.8f;
 
