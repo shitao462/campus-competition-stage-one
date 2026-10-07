@@ -35,7 +35,7 @@ with binary.open("rb") as stream:
     entry = elf.header["e_entry"]
 emulator.reg_write(UC_ARM_REG_SP, 0x2001FFF0)
 emulator.reg_write(UC_ARM_REG_LR, 0x300001)
-emulator.emu_start(entry | 1, 0x300000, timeout=20000000, count=60000000)
+emulator.emu_start(entry | 1, 0x300000, timeout=20000000, count=120000000)
 assert emulator.reg_read(UC_ARM_REG_PC) == 0x300000, "Test did not return before emulator limit"
 result = emulator.reg_read(UC_ARM_REG_R0)
 assert result == 0, f"Control scenario failed: {result}"

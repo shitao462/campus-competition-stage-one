@@ -12,6 +12,8 @@ constexpr float INTEGRAL_LIMIT_A = 0.05f;
 // Reset must overcome static load even when the remaining position error is small.
 constexpr float RESET_SPEED_KI = 0.4f;
 constexpr float RESET_INTEGRAL_LIMIT_A = 0.15f;
+constexpr float RESET_B_SPEED_KI = 0.2f;
+constexpr float RESET_B_RESTART_ERROR_RAD = 0.015f;
 constexpr float SPEED_FILTER_ALPHA = 0.2f;
 constexpr float SETTLED_ERROR_RAD = 0.008f;
 constexpr float SETTLED_SPEED_RADPS = 0.05f;
@@ -38,6 +40,12 @@ float approach(float previous, float target, float maximum_step)
   if (delta < -maximum_step) return previous - maximum_step;
   return target;
 }
+
+float wrap_direction(float angle)
+{
+  const float wrapped = std::remainder(angle, 2.0f * sp::SP_PI);
+  return wrapped <= -sp::SP_PI ? wrapped + 2.0f * sp::SP_PI : wrapped;
+}
 }  // namespace
 
 namespace app
@@ -50,7 +58,7 @@ LinkageController::LinkageController()
   reset_speed_a_(
     LINKAGE_PERIOD_S, SPEED_KP, RESET_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A),
   reset_speed_b_(
-    LINKAGE_PERIOD_S, SPEED_KP, RESET_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A)
+    LINKAGE_PERIOD_S, SPEED_KP, RESET_B_SPEED_KI, 0, MOTOR_CURRENT_LIMIT_A, RESET_INTEGRAL_LIMIT_A)
 {
 }
 
@@ -73,17 +81,23 @@ void LinkageController::reset()
 
 float LinkageController::calculate_current(
   sp::PID & position, sp::PID & speed, LoopState & state, float target, float angle,
-  float measured_speed, float motion_scale)
+  float measured_speed, float motion_scale, bool circular_target, bool stabilize_arrival)
 {
   state.filtered_speed += SPEED_FILTER_ALPHA * (measured_speed - state.filtered_speed);
   // Differentiate the final target so board and hand inputs share the same smoothing.
   // Initialize at the current target to avoid a derivative kick on entry or source release.
-  const float target_step = state.target_initialized ? target - state.previous_target : 0;
+  float target_step = state.target_initialized ? target - state.previous_target : 0;
+  // Equivalent revolution changes in reset must not create a 2-pi feedforward kick.
+  if (circular_target) target_step = wrap_direction(target_step);
   state.previous_target = target;
   state.target_initialized = true;
   const float raw_target_speed = sp::limit_max(target_step / LINKAGE_PERIOD_S, 6.0f);
   state.target_speed += TARGET_SPEED_FILTER_ALPHA * (raw_target_speed - state.target_speed);
   position.calc(target, angle);
+  const float error = target - angle;
+  // B must not carry the previous approach torque through the target and drive an overshoot.
+  if (stabilize_arrival && error * state.previous_error < 0) speed.clear();
+  state.previous_error = error;
   const float speed_limit = SPEED_LIMIT_RADPS * motion_scale;
   const float position_speed = sp::limit_max(position.out, speed_limit);
   const float requested_speed = sp::limit_max(position_speed + state.target_speed, speed_limit);
@@ -93,9 +107,18 @@ float LinkageController::calculate_current(
   const bool settled_candidate = std::abs(target - angle) < SETTLED_ERROR_RAD &&
                                  std::abs(measured_speed) < SETTLED_SPEED_RADPS &&
                                  std::abs(state.target_speed) < SETTLED_TARGET_SPEED_RADPS &&
-                                 std::abs(target_step) < 0.00001f;
+                                 (circular_target || std::abs(target_step) < 0.00001f);
   state.settled_s = settled_candidate ? state.settled_s + LINKAGE_PERIOD_S : 0;
-  const bool settled = state.settled_s >= SETTLED_DWELL_S;
+  bool settled = state.settled_s >= SETTLED_DWELL_S;
+  if (stabilize_arrival) {
+    if (settled) state.arrival_latched = true;
+    if (
+      std::abs(error) >= RESET_B_RESTART_ERROR_RAD ||
+      std::abs(measured_speed) >= SETTLED_SPEED_RADPS ||
+      std::abs(state.target_speed) >= SETTLED_TARGET_SPEED_RADPS)
+      state.arrival_latched = false;
+    settled = state.arrival_latched;
+  }
   if (settled) {
     // Remove residual integral torque once near the target; retain position correction outside it.
     speed.clear();
@@ -132,20 +155,17 @@ LinkageOutput LinkageController::update(const LinkageInput & input)
     if (!reset_active_) {
       reset();
       reset_active_ = true;
-      reset_input_a_ = input.reset_direction_a;
-      reset_input_b_ = input.reset_direction_b;
-      // Select a nearest equivalent revolution once; keep that branch until leaving UP.
-      reset_target_a_ = input.angle_a + sp::limit_angle(input.reset_direction_a - input.angle_a);
-      reset_target_b_ = input.angle_b + sp::limit_angle(input.reset_direction_b - input.angle_b);
       state_a_.filtered_speed = input.speed_a;
       state_b_.filtered_speed = input.speed_b;
     }
-    const float target_a = reset_target_a_ + input.reset_direction_a - reset_input_a_;
-    const float target_b = reset_target_b_ + input.reset_direction_b - reset_input_b_;
+    // UP aligns physical directions regardless of the MID multi-turn position history.
+    const float target_a = input.angle_a + wrap_direction(input.reset_direction_a - input.angle_a);
+    const float target_b = input.angle_b + wrap_direction(input.reset_direction_b - input.angle_b);
     const float current_a = calculate_current(
-      position_a_, reset_speed_a_, state_a_, target_a, input.angle_a, input.speed_a);
+      position_a_, reset_speed_a_, state_a_, target_a, input.angle_a, input.speed_a, 1.0f, true);
     const float current_b = calculate_current(
-      position_b_, reset_speed_b_, state_b_, target_b, input.angle_b, input.speed_b);
+      position_b_, reset_speed_b_, state_b_, target_b, input.angle_b, input.speed_b, 1.0f, true,
+      true);
     const bool settled =
       std::abs(target_a - input.angle_a) < 0.015f && std::abs(target_b - input.angle_b) < 0.015f &&
       std::abs(input.speed_a) < SETTLED_SPEED_RADPS &&

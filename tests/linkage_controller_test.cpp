@@ -244,5 +244,64 @@ extern "C" int run_tests()
     output = controller.update(input);
     if (output.current_a != 0 || output.current_b != 0) return 41;
   }
+  {
+    app::LinkageController controller;
+    // Finish a multi-turn 1:3 run and enter UP while the board is far from startup yaw.
+    app::LinkageInput input = {true, 1.1f, 0, 8 * sp::SP_PI + 0.3f, -12 * sp::SP_PI + 2.0f,
+                               0,    0,    3};
+    controller.update(input);
+    input.reset_requested = true;
+    input.reset_direction_a =
+      app::mapped_reset_direction(1.1f, app::MOTOR_A_R_ALIGNMENT_ENCODER, 1);
+    input.reset_direction_b =
+      app::mapped_reset_direction(1.1f, app::MOTOR_B_R_ALIGNMENT_ENCODER, 1);
+    auto output = controller.update(input);
+    if (
+      std::abs(output.target_a - input.angle_a) > sp::SP_PI + 0.00001f ||
+      std::abs(output.target_b - input.angle_b) > sp::SP_PI + 0.00001f)
+      return 42;
+    // Reset aligns a direction, not the old revolution index after continued rotation.
+    input.angle_a = output.target_a + 2 * sp::SP_PI;
+    input.angle_b = output.target_b - 4 * sp::SP_PI;
+    for (unsigned step = 0; step < 150; ++step) output = controller.update(input);
+    if (!output.reset_complete || output.current_a != 0 || output.current_b != 0) return 43;
+    if (
+      std::abs(output.target_a - input.angle_a) > 0.002f ||
+      std::abs(output.target_b - input.angle_b) > 0.002f)
+      return 44;
+  }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, -0.1f, -0.1f, 0, 0, 3, true, 0, 0};
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 300; ++step) output = controller.update(input);
+    // Tiny alternating IMU target steps must not preserve an old reset integral forever.
+    for (unsigned step = 0; step < 300; ++step) {
+      input.reset_direction_a = input.reset_direction_b = (step / 2) % 2 ? 0.00004f : 0;
+      input.angle_a = input.angle_b = input.reset_direction_a;
+      output = controller.update(input);
+    }
+    if (!output.reset_complete || output.current_a != 0 || output.current_b != 0) return 45;
+  }
+  {
+    app::LinkageController controller;
+    app::LinkageInput input = {true, 0, 0, 0, 0, 0, 0, 3, true, 0, 0};
+    app::LinkageOutput output;
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    // B stays released through small arrival noise, but a real displacement resumes correction.
+    input.angle_b = 0.01f;
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    if (output.current_b != 0 || !output.reset_complete) return 46;
+    input.angle_b = 0.04f;
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    if (output.current_b >= 0 || output.reset_complete) return 47;
+    // A target crossing sheds B's previous positive integral and commands braking.
+    input.angle_b = -0.1f;
+    for (unsigned step = 0; step < 500; ++step) output = controller.update(input);
+    input.angle_b = 0.03f;
+    input.speed_b = 0.2f;
+    for (unsigned step = 0; step < 100; ++step) output = controller.update(input);
+    if (output.current_b >= 0) return 48;
+  }
   return 0;
 }
